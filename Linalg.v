@@ -44,7 +44,7 @@ Definition in_poly (p : vector) (pol : polyhedron) :=
   forallb (satisfies_constraint p) pol.
 
 Definition empty_poly (pol : polyhedron) :=
-  forall p, Is_true (negb (in_poly p pol)).
+  forall p, in_poly p pol = false.
 
 Definition empty_constraint : constraint := (nil, -1).
 Definition null_constraint : constraint := (nil, 0).
@@ -236,6 +236,52 @@ Proof.
 Qed.
 Hint Immediate is_eq_nil_left is_eq_nil_right.
 
+Lemma is_null_eq_compat :
+  forall xs ys, is_eq xs ys = true -> is_null xs = is_null ys.
+Proof.
+  induction xs.
+  - destruct ys; auto.
+  - destruct ys; auto. intro Heq. simpl in *. rewrite andb_true_iff in Heq; destruct Heq as [Ha Heq].
+    f_equal; auto. rewrite Z.eqb_eq in Ha. congruence.
+Qed.
+
+Lemma is_eq_is_null_left :
+  forall xs ys, is_null xs = true -> is_eq xs ys = is_null ys.
+Proof.
+  induction xs.
+  - destruct ys; auto.
+  - destruct ys; auto. simpl. rewrite andb_true_iff. intros [Ha Heq]. rewrite Z.eqb_eq in Ha.
+    f_equal.
+    + rewrite Ha. apply Z.eqb_sym.
+    + auto.
+Qed.
+
+Lemma is_eq_is_null_right :
+  forall xs ys, is_null ys = true -> is_eq xs ys = is_null xs.
+Proof.
+  intros. rewrite is_eq_commutative. apply is_eq_is_null_left. auto.
+Qed.
+
+Lemma is_eq_is_eq_left :
+  forall xs ys zs, is_eq xs ys = true -> is_eq xs zs = is_eq ys zs.
+Proof.
+  induction xs.
+  - intros ys zs Heq. rewrite is_eq_nil_left in *. rewrite is_eq_is_null_left; auto.
+  - destruct ys; destruct zs; auto; repeat (rewrite is_eq_nil_left); repeat (rewrite is_eq_nil_right).
+    + intros. apply is_eq_is_null_left; auto.
+    + intros. apply is_null_eq_compat; auto.
+    + simpl in *. rewrite andb_true_iff. intros [Ha Heq]. f_equal.
+      * rewrite Z.eqb_eq in Ha; congruence.
+      * auto.
+Qed.
+
+Lemma is_eq_is_eq_right :
+  forall xs ys zs, is_eq ys zs = true -> is_eq xs ys = is_eq xs zs.
+Proof.
+  intros xs ys zs Heq.
+  rewrite is_eq_commutative. erewrite is_eq_is_eq_left; [apply is_eq_commutative|]; auto.
+Qed.
+
 Lemma dot_product_null_left :
   forall xs ys, is_null xs = true -> dot_product xs ys = 0.
 Proof.
@@ -368,7 +414,7 @@ Lemma is_empty_correct :
   forall wit pol, is_empty wit pol = true -> empty_poly pol.
 Proof.
   intros wit pol Hemp p.
-  apply negb_prop_intro. intro Hin. apply Is_true_eq_true in Hin.
+  assert (~ (in_poly p pol = true)); [|destruct (in_poly p pol); congruence]. intro Hin.
   assert (satisfies_constraint p empty_constraint = true).
   - eapply is_redundant_correct; eauto.
   - rewrite empty_constraint_empty in *; congruence.
