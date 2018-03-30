@@ -42,23 +42,23 @@ Definition timestamp_at schedule p := map (fun t => dot_product (fst t) p + (snd
 Definition scanned to_scan n p m q := to_scan m q && negb (is_eq p q && (n =? m)%nat).
 Hint Unfold scanned.
 
-Inductive poly_semantics : (nat -> vector -> bool) -> Poly_Program -> list Z -> mem -> mem -> Prop :=
-| PolyDone : forall to_scan prog env mem, (forall n p, to_scan n p = false) -> poly_semantics to_scan prog env mem mem
-| PolyProgress : forall to_scan prog env mem1 mem2 mem3 poly_instr n p,
+Inductive poly_semantics : (nat -> vector -> bool) -> Poly_Program -> mem -> mem -> Prop :=
+| PolyDone : forall to_scan prog mem, (forall n p, to_scan n p = false) -> poly_semantics to_scan prog mem mem
+| PolyProgress : forall to_scan prog mem1 mem2 mem3 poly_instr n p,
     to_scan n p = true -> nth_error prog n = Some poly_instr ->
     (forall n2 p2 poly_instr2, nth_error prog n2 = Some poly_instr2 ->
                           timestamp_compare (timestamp_at poly_instr2.(pi_schedule) p2) (timestamp_at poly_instr.(pi_schedule) p) = Lt ->
                           to_scan n2 p2 = false) ->
-    instr_semantics poly_instr.(pi_instr) (env ++ p) mem1 mem2 ->
-    poly_semantics (scanned to_scan n p) prog env mem2 mem3 ->
-    poly_semantics to_scan prog env mem1 mem3.
+    instr_semantics poly_instr.(pi_instr) p mem1 mem2 ->
+    poly_semantics (scanned to_scan n p) prog mem2 mem3 ->
+    poly_semantics to_scan prog mem1 mem3.
 
 Theorem poly_semantics_extensionality :
-  forall to_scan1 prog env mem1 mem2,
-    poly_semantics to_scan1 prog env mem1 mem2 -> forall to_scan2, (forall n p, to_scan1 n p = to_scan2 n p) -> poly_semantics to_scan2 prog env mem1 mem2.
+  forall to_scan1 prog mem1 mem2,
+    poly_semantics to_scan1 prog mem1 mem2 -> forall to_scan2, (forall n p, to_scan1 n p = to_scan2 n p) -> poly_semantics to_scan2 prog mem1 mem2.
 Proof.
-  intros to_scan1 prog env mem1 mem2 Hsem.
-  induction Hsem as [to_scan3 prog1 env1 mem4 Hdone|to_scan3 prog1 env1 mem3 mem4 mem5 pi n p Hscanp Heqpi Hts Hsem1 Hsem2 IH].
+  intros to_scan1 prog mem1 mem2 Hsem.
+  induction Hsem as [to_scan3 prog1 mem4 Hdone|to_scan3 prog1 mem3 mem4 mem5 pi n p Hscanp Heqpi Hts Hsem1 Hsem2 IH].
   - intros. constructor. intros. eauto.
   - intros to_scan2 Heq. econstructor; eauto. apply IH. intros. autounfold. rewrite Heq. auto.
 Qed.
@@ -73,8 +73,8 @@ Proof.
 Qed.
 
 Theorem poly_semantics_concat :
-  forall to_scan1 prog env mem1 mem2,
-    poly_semantics to_scan1 prog env mem1 mem2 ->
+  forall to_scan1 prog mem1 mem2,
+    poly_semantics to_scan1 prog mem1 mem2 ->
     forall to_scan2 mem3,
     wf_scan to_scan1 ->
     (forall n p, to_scan1 n p = false \/ to_scan2 n p = false) ->
@@ -82,11 +82,11 @@ Theorem poly_semantics_concat :
                            timestamp_compare (timestamp_at pi2.(pi_schedule) p2) (timestamp_at pi1.(pi_schedule) p1) = Lt ->
                            to_scan1 n1 p1 = false \/ to_scan2 n2 p2 = false) ->
     
-    poly_semantics to_scan2 prog env mem2 mem3 ->
-    poly_semantics (fun n p => to_scan1 n p || to_scan2 n p) prog env mem1 mem3.
+    poly_semantics to_scan2 prog mem2 mem3 ->
+    poly_semantics (fun n p => to_scan1 n p || to_scan2 n p) prog mem1 mem3.
 Proof.
-  intros to_scan1 prog env mem1 mem2 Hsem.
-  induction Hsem as [to_scan3 prog1 env1 mem4 Hdone|to_scan3 prog1 env1 mem4 mem5 mem6 pi n p Hscanp Heqpi Hts Hsem1 Hsem2 IH].
+  intros to_scan1 prog mem1 mem2 Hsem.
+  induction Hsem as [to_scan3 prog1 mem4 Hdone|to_scan3 prog1 mem4 mem5 mem6 pi n p Hscanp Heqpi Hts Hsem1 Hsem2 IH].
   - intros to_scan2 mem3 Hwf1 Hdisj Hcmp Hsem1. eapply poly_semantics_extensionality; eauto. intros. rewrite Hdone. auto.
   - intros to_scan2 mem3 Hwf1 Hdisj Hcmp Hsem3. eapply PolyProgress with (n := n) (p := p); eauto.
     + rewrite Hscanp. auto.
@@ -106,3 +106,4 @@ Proof.
         -- destruct (is_eq p p0 && (n =? n0)%nat) eqn:Hd; simpl; auto using andb_true_r.
            rewrite andb_true_iff in Hd. destruct Hd as [Heqp Hn]. erewrite Hwf1 in Hscanp; [|eauto]. rewrite Nat.eqb_eq in Hn. congruence.
 Qed.
+
