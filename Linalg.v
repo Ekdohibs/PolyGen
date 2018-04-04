@@ -214,6 +214,7 @@ Proof.
   rewrite andb_true_iff; split; auto.
   rewrite Z.eqb_eq; auto.
 Qed.
+Hint Immediate is_eq_reflexive.
 
 Lemma is_eq_commutative :
   forall xs ys, is_eq xs ys = is_eq ys xs.

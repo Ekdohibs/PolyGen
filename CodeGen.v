@@ -42,3 +42,24 @@ Axiom split_poly_indices :
 
 Axiom split_poly_eq :
   forall pl r n p, split_polys pl = Ok r -> (n < length pl)%nat -> in_poly p (nth n pl nil) = existsb (fun z => in_poly p (fst z) && existsb (fun m => (m =? n)%nat) (snd z)) r.
+
+Fixpoint zero_after (n : nat) (l : list Z) :=
+  match n, l with
+  | O, _ => is_null l
+  | _, nil => true
+  | S n', x :: l' => zero_after n' l'
+  end.
+
+Fixpoint make_linear_expr (n : nat) (l : list Z) :=
+  match n, l with
+  | O, _ | _, nil => Constant 0
+  | S n, x :: l => Sum (Mult x (Var n)) (make_linear_expr n l)
+  end.
+
+Definition make_affine_expr (n : nat) (e : (vector * Z)%type) := Sum (make_linear_expr n (fst e)) (Constant (snd e)).
+
+Fixpoint generate_loop (d : nat) (n : nat) (pi : Polyhedral_Instruction) : stmt :=
+  match d with
+  | O => 
+  | S d1 => _
+  end.

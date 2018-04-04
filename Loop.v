@@ -11,7 +11,9 @@ Inductive expr :=
 | Mult : Z -> expr -> expr
 | Div : expr -> Z -> expr
 | Mod : expr -> Z -> expr
-| Var : nat -> expr.
+| Var : nat -> expr
+| Max : expr -> expr -> expr
+| Min : expr -> expr -> expr.
 
 Fixpoint eval_expr (env : list Z) (e : expr) :=
   match e with
@@ -21,6 +23,8 @@ Fixpoint eval_expr (env : list Z) (e : expr) :=
   | Div e k => eval_expr env e / k
   | Mod e k => (eval_expr env e) mod k
   | Var n => nth n env 0
+  | Max e1 e2 => Z.max (eval_expr env e1) (eval_expr env e2)
+  | Min e1 e2 => Z.min (eval_expr env e1) (eval_expr env e2)
   end.
 
 Parameter instr : Type.
