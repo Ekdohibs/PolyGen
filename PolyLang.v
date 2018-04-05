@@ -126,6 +126,12 @@ Proof.
     destruct (a ?= z); auto.
 Qed.
 
+Lemma timestamp_compare_reflexive :
+  forall t, timestamp_compare t t = Eq.
+Proof.
+  induction t; simpl; try rewrite Z.compare_refl; auto.
+Qed.
+
 Definition matrix_product schedule p := map (fun t => dot_product (fst t) p + (snd t)) schedule.
 
 Definition scanned to_scan n p m q := to_scan m q && negb (is_eq p q && (n =? m)%nat).
@@ -248,11 +254,13 @@ Proof.
            rewrite andb_true_iff in Hd. destruct Hd as [Heqp Hn]. erewrite Hwf1 in Hscanp; [|eauto]. rewrite Nat.eqb_eq in Hn. congruence.
 Qed.
 
+(*
 Fixpoint prefix (d : nat) (l : vector) :=
   match d with
   | O => l
   | S d => 0 :: prefix d l
   end.
+ *)
 
 Fixpoint resize (d : nat) (l : vector) :=
   match d with
@@ -293,17 +301,126 @@ Proof.
     + rewrite IHd; rewrite Z.eqb_refl; auto.
 Qed.
 
-Definition prefix_constraint (d : nat) (c : vector * Z) := (prefix d (fst c), snd c).
+Definition insert_zeros (d : nat) (i : nat) (l : vector) := resize i l ++ repeat 0 d ++ skipn i l.
+Definition insert_zeros_constraint (d : nat) (i : nat) (c : vector * Z) := (insert_zeros d i (fst c), snd c).
 
-Definition pi_elim_schedule (d : nat) (pi : Polyhedral_Instruction) :=
+Fixpoint make_null_poly (d : nat) (n : nat) :=
+  match n with
+  | O => nil
+  | S n => (repeat 0 d ++ (-1 :: nil), 0) :: (repeat 0 d ++ (1 :: nil), 0) :: make_null_poly (S d) n
+  end.
+
+Fixpoint make_sched_poly (d : nat) (i : nat) (env_size : nat) (l : list (vector * Z)) :=
+  (* add scheduling constraints in polyhedron after env, so that with fixed env, lexicographical ordering preserves semantics *)
+  match l with
+  | nil => make_null_poly (i + env_size)%nat (d - i)%nat
+  | (v, c) :: l =>
+    let vpref := resize env_size v in
+    let vsuf := skipn env_size v in
+    (vpref ++ repeat 0 i ++ (-1 :: repeat 0 (d - i - 1)%nat) ++ vsuf, -c)
+      :: (mult_vector (-1) vpref ++ repeat 0 i ++ (1 :: repeat 0 (d - i - 1)%nat) ++ (mult_vector (-1) vsuf), c)
+      :: make_sched_poly d (S i) env_size l
+  end.
+
+Lemma dot_product_split :
+  forall l1 l2 l3 l4, length l1 = length l3 -> dot_product (l1 ++ l2) (l3 ++ l4) = dot_product l1 l3 + dot_product l2 l4.
+Proof.
+  induction l1.
+  - intros l2 l3 l4 H. destruct l3; simpl in *; auto; lia.
+  - intros l2 l3 l4 H. destruct l3; simpl in *; try lia. rewrite IHl1; lia.
+Qed.
+
+Lemma repeat_zero_is_null :
+  forall n, is_null (repeat 0 n) = true.
+Proof.
+  induction n; auto.
+Qed.
+
+Lemma dot_product_repeat_zero_right :
+  forall n l, dot_product l (repeat 0 n) = 0.
+Proof.
+  intros. apply dot_product_null_right. apply repeat_zero_is_null.
+Qed.
+
+Lemma dot_product_repeat_zero_left :
+  forall n l, dot_product (repeat 0 n) l = 0.
+Proof.
+  intros. rewrite dot_product_commutative; apply dot_product_repeat_zero_right.
+Qed.
+
+Theorem make_null_poly_correct :
+  forall n d p q r, length p = d -> length q = n -> in_poly (p ++ q ++ r) (make_null_poly d n) = is_null q.
+Proof.
+  induction n.
+  - intros; destruct q; simpl in *; auto; lia.
+  - intros d p q r Hlp Hlq.
+    destruct q as [|x q]; simpl in *; [lia|].
+    unfold satisfies_constraint; simpl.
+    repeat (rewrite dot_product_split; [|rewrite repeat_length; lia]; simpl).
+    repeat (rewrite dot_product_repeat_zero_right).
+    repeat (rewrite dot_product_nil_right).
+    assert (He : p ++ x :: q ++ r = (p ++ (x :: nil)) ++ q ++ r).
+    { rewrite <- app_assoc; auto. }
+    rewrite He. rewrite IHn; [|rewrite app_length; simpl; lia|lia].
+    rewrite andb_assoc. f_equal.
+    destruct (x =? 0) eqn:Hx.
+    + rewrite andb_true_iff. repeat (rewrite Z.leb_le); rewrite Z.eqb_eq in Hx. lia.
+    + rewrite andb_false_iff. repeat (rewrite Z.leb_gt); rewrite Z.eqb_neq in Hx. lia.
+Qed.
+
+Theorem mult_vector_length :
+  forall k v, length (mult_vector k v) = length v.
+Proof.
+  intros. apply map_length.
+Qed.
+
+Theorem make_sched_poly_correct_aux :
+  forall l i d es, (length l <= d - i)%nat ->
+           forall p q r s, length p = es -> length q = i -> length r = (d - i)%nat ->
+                    in_poly (p ++ q ++ r ++ s) (make_sched_poly d i es l) = is_eq r (matrix_product l (p ++ s)).
+Proof.
+  induction l.
+  - intros. simpl in *. rewrite is_eq_nil_right. rewrite app_assoc. apply make_null_poly_correct; auto. rewrite app_length; lia.
+  - intros i d es Hlength p q r s Hlp Hlq Hlr.
+    simpl in *. destruct a as [v c]. simpl in *.
+    destruct r as [|x r]; simpl in *; [lia|].
+    unfold satisfies_constraint; simpl.
+    repeat (rewrite dot_product_split; [|try rewrite repeat_length; try rewrite mult_vector_length; try rewrite resize_length; lia]; simpl).
+    repeat (rewrite dot_product_mult_right).
+    repeat (rewrite dot_product_repeat_zero_right).
+    assert (He : p ++ q ++ x :: r ++ s = p ++ (q ++ (x :: nil)) ++ r ++ s).
+    { rewrite <- app_assoc. auto. }
+    rewrite He. rewrite IHl; [|lia|auto|rewrite app_length;simpl;lia|lia].
+    rewrite andb_assoc. f_equal.
+    assert (Hde : dot_product v (p ++ s) = dot_product p (resize es v) + dot_product s (skipn es v)).
+    { rewrite <- dot_product_split by (rewrite resize_length; lia).
+      rewrite dot_product_commutative. apply dot_product_eq_compat_right.
+      rewrite is_eq_commutative. apply resize_skipn_eq.
+    }
+    destruct (x =? dot_product v (p ++ s) + c) eqn:Hx.
+    + rewrite andb_true_iff. repeat (rewrite Z.leb_le); rewrite Z.eqb_eq in Hx. lia.
+    + rewrite andb_false_iff. repeat (rewrite Z.leb_gt); rewrite Z.eqb_neq in Hx. lia.
+Qed.
+
+
+Theorem make_sched_poly_correct :
+  forall l d es, (length l <= d)%nat ->
+            forall p q r, length p = es -> length q = d ->
+                    in_poly (p ++ q ++ r) (make_sched_poly d 0%nat es l) = is_eq q (matrix_product l (p ++ r)).
+Proof.
+  intros. apply make_sched_poly_correct_aux with (q := nil); auto; lia.
+Qed.
+
+Definition pi_elim_schedule (d : nat) (env_size : nat) (pi : Polyhedral_Instruction) :=
   {|
     pi_instr := pi.(pi_instr) ;
     pi_schedule := nil ;
-    pi_transformation := map (prefix_constraint d) pi.(pi_transformation) ;
-    pi_poly := nil ; (* todo *)
+    pi_transformation := map (insert_zeros_constraint d env_size) pi.(pi_transformation) ;
+    pi_poly := make_sched_poly d 0%nat env_size pi.(pi_schedule) ++
+               map (insert_zeros_constraint d env_size) pi.(pi_poly) ;
   |}.
 
-Definition elim_schedule (d : nat) (p : Poly_Program) := map (pi_elim_schedule d) p.
+Definition elim_schedule (d : nat) (env_size : nat) (p : Poly_Program) := map (pi_elim_schedule d env_size) p.
 
 Lemma map_nth_error_none :
   forall A B n (f : A -> B) l, nth_error l n = None -> nth_error (map f l) n = None.
@@ -327,59 +444,109 @@ Proof.
   unfold matrix_product. apply map_ext. intros c. f_equal. apply dot_product_eq_compat_right; auto.
 Qed.
 
-Lemma prefix_product_skipn :
-  forall d l1 l2, dot_product (prefix d l1) l2 = dot_product l1 (skipn d l2).
+Lemma dot_product_split_left :
+  forall l1 l2 l3, dot_product (l1 ++ l2) l3 = dot_product l1 (resize (length l1) l3) + dot_product l2 (skipn (length l1) l3).
 Proof.
-  induction d.
-  - intros l1 l2; simpl; auto.
-  - intros l1 l2. destruct l2; simpl.
-    + destruct l1; auto.
+  intros.
+  erewrite dot_product_eq_compat_right; [|rewrite is_eq_commutative; apply resize_skipn_eq].
+  rewrite dot_product_split; [reflexivity|rewrite resize_length; auto].
+Qed.
+
+Lemma dot_product_split_right :
+  forall l1 l2 l3, dot_product l1 (l2 ++ l3) = dot_product (resize (length l2) l1) l2 + dot_product (skipn (length l2) l1) l3.
+Proof.
+  intros. rewrite dot_product_commutative. rewrite dot_product_split_left.
+  f_equal; apply dot_product_commutative.
+Qed.
+
+Lemma skipn_skipn :
+  forall A n m (l : list A), skipn n (skipn m l) = skipn (n + m)%nat l.
+Proof.
+  induction m.
+  - simpl. rewrite Nat.add_0_r; auto.
+  - rewrite Nat.add_succ_r. destruct l; simpl.
+    + destruct n; auto.
     + auto.
+Qed.
+
+Lemma split3_eq :
+  forall i d l, is_eq l (resize i l ++ resize d (skipn i l) ++ skipn (d + i)%nat l) = true.
+Proof.
+  intros.
+  erewrite is_eq_is_eq_left; [|rewrite is_eq_commutative; apply resize_skipn_eq].
+  rewrite is_eq_add; [|reflexivity]. rewrite is_eq_reflexive; simpl.
+  erewrite is_eq_is_eq_left; [|rewrite is_eq_commutative; apply resize_skipn_eq].
+  rewrite is_eq_add; [|reflexivity]. rewrite is_eq_reflexive; simpl.
+  rewrite skipn_skipn; apply is_eq_reflexive.
+Qed.
+
+Lemma insert_zeros_product_skipn :
+  forall d i l1 l2, dot_product (insert_zeros d i l1) l2 = dot_product l1 (resize i l2 ++ skipn (d + i)%nat l2).
+Proof.
+  intros.
+  unfold insert_zeros.
+  repeat (rewrite dot_product_split_left); rewrite dot_product_split_right.
+  repeat (rewrite resize_length). rewrite repeat_length.
+  rewrite dot_product_repeat_zero_left.
+  rewrite skipn_skipn. lia.
 Qed.
 
 Lemma matrix_product_skipn :
-  forall d m l, matrix_product (map (prefix_constraint d) m) l = matrix_product m (skipn d l).
+  forall d i m l, matrix_product (map (insert_zeros_constraint d i) m) l = matrix_product m (resize i l ++ skipn (d + i)%nat l).
 Proof.
   intros. unfold matrix_product. rewrite map_map.
-  apply map_ext. intros. unfold prefix_constraint; simpl. rewrite prefix_product_skipn. auto.
+  apply map_ext. intros.
+  unfold insert_zeros_constraint; simpl.
+  rewrite insert_zeros_product_skipn. auto.
 Qed.
 
 Theorem poly_elim_schedule_semantics_preserve :
-  forall d to_scan_lex prog_lex mem1 mem2,
+  forall d es env to_scan_lex prog_lex mem1 mem2,
     poly_lex_semantics to_scan_lex prog_lex mem1 mem2 ->
     forall to_scan prog,
-      prog_lex = elim_schedule d prog ->
+      prog_lex = elim_schedule d es prog ->
       wf_scan to_scan -> wf_scan to_scan_lex ->
       (forall n pi, nth_error prog n = Some pi -> (length pi.(pi_schedule) <= d)%nat) ->
-      (forall n p ts pi, nth_error prog n = Some pi -> length ts = d ->
-                    to_scan_lex n (ts ++ p) = is_eq ts (matrix_product pi.(pi_schedule) p) && to_scan n p) ->
+      (forall n p q ts pi, nth_error prog n = Some pi -> length p = es -> length ts = d ->
+                      to_scan_lex n (p ++ ts ++ q) = is_eq ts (matrix_product pi.(pi_schedule) (p ++ q)) && to_scan n (p ++ q)) ->
+      (forall n p q, length p = es -> to_scan n (p ++ q) = true -> is_eq p env = true) ->
       (forall n p, nth_error prog n = None -> to_scan n p = false) ->
       poly_semantics to_scan prog mem1 mem2.
 Proof.
-  intros d to_scan_lex prog mem1 mem2 Hsem.
+  intros d es env to_scan_lex prog mem1 mem2 Hsem.
   induction Hsem as [to_scan_l1 prog_l1 mem3 Hdone|to_scan_l1 prog_l1 mem3 mem4 mem5 pi n p Hscanp Heqpi Hts Hsem1 Hsem2 IH].
-  - intros to_scan prog Hprogeq Hwf Hwflex Hsched_length Hcompat Hout.
+  - intros to_scan prog Hprogeq Hwf Hwflex Hsched_length Hcompat Hscanenv Hout.
     apply PolyDone. intros n p.
     destruct (nth_error prog n) as [pi|] eqn:Heq.
-    + specialize (Hcompat n p (resize d (matrix_product pi.(pi_schedule) p)) pi).
-      rewrite Hdone in Hcompat. rewrite resize_eq in Hcompat.
-      * simpl in Hcompat. symmetry; apply Hcompat; auto.
+    + specialize (Hcompat n (resize es p) (skipn es p) (resize d (matrix_product pi.(pi_schedule) p)) pi).
+      rewrite Hdone in Hcompat.
+      erewrite matrix_product_eq in Hcompat; [|rewrite is_eq_commutative; apply resize_skipn_eq].
+      rewrite resize_eq in Hcompat.
+      * simpl in Hcompat. erewrite Hwf in Hcompat; [|apply resize_skipn_eq]. symmetry; apply Hcompat; auto.
       * unfold matrix_product. rewrite map_length. eauto.
     + auto.
-  - intros to_scan prog Hprogeq Hwf Hwflex Hsched_length Hcompat Hout.
-    assert (Hs : to_scan_l1 n (resize d p ++ skipn d p) = true).
-    { unfold wf_scan in Hwflex; erewrite Hwflex; eauto using resize_skipn_eq. }
+  - intros to_scan prog Hprogeq Hwf Hwflex Hsched_length Hcompat Hscanenv Hout.
+    assert (Hs : to_scan_l1 n (resize es p ++ resize d (skipn es p) ++ skipn (d + es)%nat p) = true).
+    { unfold wf_scan in Hwflex; erewrite Hwflex; eauto. rewrite is_eq_commutative; apply split3_eq. }
     rewrite Hprogeq in *; unfold elim_schedule in Heqpi.
     destruct (nth_error prog n) as [pi1|] eqn:Hpi1; [| rewrite map_nth_error_none in Heqpi; congruence ].
     erewrite map_nth_error in Heqpi; eauto; inversion Heqpi as [Heqpi1].
-    rewrite Hcompat with (pi := pi1) in Hs. rewrite andb_true_iff in Hs; destruct Hs as [Heqp Hscan].
-    eapply PolyProgress with (n := n) (p := skipn d p); eauto.
+    rewrite Hcompat with (pi := pi1) in Hs; auto.
+    rewrite andb_true_iff in Hs; destruct Hs as [Heqp Hscan].
+    eapply PolyProgress with (n := n) (p := resize es p ++ skipn (d + es)%nat p); eauto.
     + intros n2 p2 pi2 Heqpi2 Hcmp.
-      specialize (Hts n2 ((resize d (matrix_product pi2.(pi_schedule) p2)) ++ p2)).
+      specialize (Hts n2 (resize es p2 ++ (resize d (matrix_product pi2.(pi_schedule) p2)) ++ skipn es p2)).
       unfold wf_scan in Hwflex. rewrite Hcompat with (pi := pi2) in Hts; auto.
+      erewrite matrix_product_eq with (l1 := resize es p2 ++ skipn es p2) in Hts; [|apply resize_skipn_eq].
       rewrite resize_eq in Hts by (unfold matrix_product; rewrite map_length; eauto). simpl in Hts.
-      apply Hts. erewrite <- timestamp_compare_right_eq; [|apply resize_skipn_eq with (d := d)].
-      rewrite timestamp_compare_app by (repeat (rewrite resize_length); reflexivity).
+      erewrite Hwf in Hts; [|apply resize_skipn_eq].
+      destruct (to_scan n2 p2) eqn:Hscan2; auto.
+      apply Hts.
+      erewrite timestamp_compare_right_eq; [|apply split3_eq with (d := d) (i := es)].
+      repeat (rewrite timestamp_compare_app by (repeat (rewrite resize_length); reflexivity)).
+      erewrite timestamp_compare_right_eq; [|eapply Hscanenv; eauto].
+      erewrite timestamp_compare_left_eq; [|eapply Hscanenv; eauto; erewrite Hwf; [|apply resize_skipn_eq]; eauto].
+      rewrite timestamp_compare_reflexive; simpl.
       erewrite timestamp_compare_right_eq; [|apply Heqp].
       erewrite timestamp_compare_left_eq; [|apply resize_eq with (d := d); unfold matrix_product; rewrite map_length; eauto].
       rewrite Hcmp; auto.
@@ -388,20 +555,143 @@ Proof.
     + apply IH; auto.
       * apply scanned_wf_compat; auto.
       * apply scanned_wf_compat; auto.
-      * intros n0 p0 ts pi0 Hpi0 Hlts.
+      * intros n0 p0 q0 ts pi0 Hpi0 Hlp0 Hlts.
         unfold scanned. rewrite Hcompat with (pi := pi0); auto.
-        destruct (is_eq ts (matrix_product (pi_schedule pi0) p0)) eqn:Htseq; auto.
+        destruct (is_eq ts (matrix_product (pi_schedule pi0) (p0 ++ q0))) eqn:Htseq; auto.
         simpl.
         f_equal; f_equal.
         destruct (n =? n0)%nat eqn:Heqn; [|repeat (rewrite andb_false_r); auto]. repeat (rewrite andb_true_r).
-        erewrite <- is_eq_is_eq_left; [|apply resize_skipn_eq with (d := d)].
-        rewrite is_eq_add; [|rewrite Hlts; auto].
-        destruct (is_eq (skipn d p) p0) eqn:Heqp0; auto using andb_false_r.
+        erewrite is_eq_is_eq_left; [|apply split3_eq with (d := d) (i := es)].
+        repeat (rewrite is_eq_add; [|rewrite resize_length; auto]).
+        destruct (is_eq (resize es p) p0) eqn:Heqp0; simpl; auto.
+        destruct (is_eq (skipn (d + es)%nat p) q0) eqn:Heqq0; simpl; auto using andb_false_r.
         rewrite andb_true_r.
         rewrite Nat.eqb_eq in Heqn. rewrite Heqn in *. assert (Heqpi0 : pi0 = pi1) by congruence. rewrite Heqpi0 in *.
-        erewrite matrix_product_eq in Heqp; eauto.
+        rewrite matrix_product_eq with (l2 := p0 ++ q0) in Heqp;
+        [| rewrite is_eq_add by (rewrite resize_length; auto); rewrite Heqp0; rewrite Heqq0; auto ].
         erewrite is_eq_is_eq_right; eauto.
+      * intros n0 p0 q0 H. unfold scanned. rewrite andb_true_iff. intros [H1 H2]. eapply Hscanenv; eauto.
       * intros n0 p0 H. unfold scanned. rewrite Hout; auto.
-    + auto.
-    + auto.
+Qed.
+
+Definition env_scan (prog : Poly_Program) (env : vector) (n : nat) (p : vector) :=
+  match nth_error prog n with
+  | Some pi => is_eq env (resize (length env) p) && in_poly p pi.(pi_poly)
+  | None => false
+  end.
+
+Definition env_poly_semantics (env : vector) (prog : Poly_Program) (mem1 mem2 : mem) :=
+  poly_semantics (env_scan prog env) prog mem1 mem2.
+
+Definition env_poly_lex_semantics (env : vector) (prog : Poly_Program) (mem1 mem2 : mem) :=
+  poly_lex_semantics (env_scan prog env) prog mem1 mem2.
+
+Lemma resize_app :
+  forall n p q, length p = n -> resize n (p ++ q) = p.
+Proof.
+  induction n.
+  - intros; destruct p; simpl in *; auto; lia.
+  - intros p q Hlength; destruct p; simpl in *.
+    + lia.
+    + rewrite IHn; auto.
+Qed.
+
+Lemma skipn_app :
+  forall A n (p q : list A), length p = n -> skipn n (p ++ q) = q.
+Proof.
+  induction n.
+  - intros; destruct p; simpl in *; auto; lia.
+  - intros; destruct p; simpl in *; auto; lia.
+Qed.
+
+Lemma in_poly_app :
+  forall p pol1 pol2, in_poly p (pol1 ++ pol2) = in_poly p pol1 && in_poly p pol2.
+Proof.
+  intros. unfold in_poly. apply forallb_app.
+Qed.
+
+Lemma forallb_map :
+  forall A B f (g : A -> B) l, forallb f (map g l) = forallb (fun x => f (g x)) l.
+Proof.
+  intros. induction l; simpl; auto; congruence.
+Qed.
+
+Lemma forallb_ext :
+  forall A f g (l : list A), (forall x, f x = g x) -> forallb f l = forallb g l.
+Proof.
+  intros. induction l; simpl; auto; congruence.
+Qed.
+
+Lemma in_poly_is_eq_compat :
+  forall p1 p2 pol, is_eq p1 p2 = true -> in_poly p1 pol = in_poly p2 pol.
+Proof.
+  intros p1 p2 pol Heq.
+  unfold in_poly. apply forallb_ext.
+  intros c. unfold satisfies_constraint. f_equal. apply dot_product_eq_compat_left; auto.
+Qed.
+
+Lemma resize_null_repeat :
+  forall n l, is_null l = true -> resize n l = repeat 0 n.
+Proof.
+  induction n.
+  - intros; simpl; auto.
+  - intros l H; destruct l; simpl in *.
+    + rewrite IHn; auto.
+    + rewrite andb_true_iff in H; rewrite Z.eqb_eq in H; destruct H.
+      rewrite IHn; auto; congruence.
+Qed.
+
+Lemma resize_eq_compat :
+  forall n l1 l2, is_eq l1 l2 = true -> resize n l1 = resize n l2.
+Proof.
+  induction n.
+  - intros; simpl; auto.
+  - intros l1 l2 H.
+    destruct l1; destruct l2; simpl in *; try (rewrite andb_true_iff in H; destruct H as [H1 H2]; rewrite Z.eqb_eq in H1); auto;
+      f_equal; auto; apply IHn; try rewrite is_eq_nil_left; try rewrite is_eq_nil_right; auto.
+Qed.
+
+Lemma env_scan_wf :
+  forall prog env, wf_scan (env_scan prog env).
+Proof.
+  intros prog env n p1 p2 Heq. unfold env_scan.
+  destruct (nth_error prog n) as [pi|]; simpl; auto.
+  f_equal.
+  - f_equal. apply resize_eq_compat. auto.
+  - apply in_poly_is_eq_compat; auto.
+Qed.
+
+Theorem poly_elim_schedule_semantics_env_preserve :
+  forall d es env prog mem1 mem2,
+    es = length env ->
+    env_poly_lex_semantics env (elim_schedule d es prog) mem1 mem2 ->
+    (forall n pi, nth_error prog n = Some pi -> (length pi.(pi_schedule) <= d)%nat) ->
+    env_poly_semantics env prog mem1 mem2.
+Proof.
+  intros d es env prog mem1 mem2 Hlength Hsem Hsched_length.
+  unfold env_poly_semantics. unfold env_poly_lex_semantics in Hsem.
+  eapply poly_elim_schedule_semantics_preserve.
+  - exact Hsem.
+  - reflexivity.
+  - apply env_scan_wf.
+  - apply env_scan_wf.
+  - exact Hsched_length.
+  - intros n p q ts pi Heqpi Hlp Hlts.
+    unfold env_scan. unfold elim_schedule. rewrite map_nth_error with (d := pi); auto. rewrite Heqpi.
+    rewrite <- Hlength. unfold pi_elim_schedule; simpl.
+    repeat (rewrite resize_app by apply Hlp).
+    destruct (is_eq env p); simpl; auto using andb_false_r.
+    rewrite in_poly_app. f_equal.
+    + apply make_sched_poly_correct; eauto.
+    + unfold in_poly. rewrite forallb_map. apply forallb_ext.
+      intros c. unfold satisfies_constraint. unfold insert_zeros_constraint. simpl.
+      f_equal. rewrite dot_product_commutative. rewrite insert_zeros_product_skipn.
+      rewrite resize_app by apply Hlp.
+      rewrite app_assoc. rewrite skipn_app; [|rewrite app_length; lia].
+      apply dot_product_commutative.
+  - intros n p q Hlp Hscan. unfold env_scan in Hscan.
+    destruct (nth_error prog n) as [pi|]; [|congruence].
+    rewrite andb_true_iff in Hscan; destruct Hscan as [He Hp].
+    rewrite resize_app in He by congruence. rewrite is_eq_commutative. exact He.
+  - intros n p Hout. unfold env_scan. rewrite Hout. auto.
 Qed.
