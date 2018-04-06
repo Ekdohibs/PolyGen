@@ -5,6 +5,8 @@ Require Import Psatz.
 Open Scope Z_scope.
 Open Scope list_scope.
 
+Require Import Instr.
+
 Inductive expr :=
 | Constant : Z -> expr
 | Sum : expr -> expr -> expr
@@ -26,10 +28,6 @@ Fixpoint eval_expr (env : list Z) (e : expr) :=
   | Max e1 e2 => Z.max (eval_expr env e1) (eval_expr env e2)
   | Min e1 e2 => Z.min (eval_expr env e1) (eval_expr env e2)
   end.
-
-Parameter instr : Type.
-Parameter mem : Type.
-Parameter instr_semantics : instr -> list Z -> mem -> mem -> Prop.
 
 Inductive test :=
 | LE : expr -> expr -> test
