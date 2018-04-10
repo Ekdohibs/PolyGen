@@ -155,6 +155,111 @@ Proof.
            reflect. destruct Hd as [Heqp Hn]. rewrite Heqp, Hn in Hscanp. congruence.
 Qed.
 
+Fixpoint n_range (n : nat) :=
+  match n with
+  | O => nil
+  | S n => (n_range n) ++ (n :: nil)
+  end.
+
+Lemma n_range_in :
+  forall n m, In m (n_range n) <-> (m < n)%nat.
+Proof.
+  induction n.
+  - intros. simpl in *. split; [intro; exfalso; auto | apply Nat.nlt_0_r].
+  - intros m. simpl in *. split.
+    + intros H. apply in_app_or in H. destruct H as [H | H].
+      * rewrite IHn in H. lia.
+      * simpl in H. destruct H; [lia | exfalso; auto].
+    + intros H. apply in_or_app. destruct (Nat.eq_dec n m).
+      * right; simpl; auto.
+      * left; rewrite IHn; lia.
+Qed.
+
+Lemma n_range_begin :
+  forall n, n_range (S n) = 0%nat :: (map S (n_range n)).
+Proof.
+  induction n.
+  - simpl in *. auto.
+  - simpl in *. rewrite IHn at 1. simpl.
+    f_equal. rewrite map_app. simpl. reflexivity.
+Qed.
+
+Definition Zrange lb ub := map (fun n => lb + Z.of_nat n) (n_range (Z.to_nat (ub - lb))).
+
+Lemma Zrange_empty :
+  forall lb ub, lb >= ub -> Zrange lb ub = nil.
+Proof.
+  intros lb ub H. unfold Zrange.
+  assert (H1 : Z.to_nat (ub - lb) = 0%nat).
+  { destruct (ub - lb) eqn:Hdiff; (reflexivity || lia). }
+  rewrite H1. reflexivity.
+Qed.
+
+Lemma Zrange_begin :
+  forall lb ub, lb < ub -> Zrange lb ub = lb :: Zrange (lb + 1) ub.
+Proof.
+  intros lb ub H. unfold Zrange.
+  assert (H1 : Z.to_nat (ub - lb) = S (Z.to_nat (ub - (lb + 1)))).
+  { rewrite <- Z2Nat.inj_succ by lia. f_equal. lia. }
+  rewrite H1. rewrite n_range_begin. simpl. f_equal.
+  - lia.
+  - rewrite map_map; apply map_ext. intro; lia.
+Qed.
+
+Lemma Zrange_end :
+  forall lb ub, lb < ub -> Zrange lb ub = Zrange lb (ub - 1) ++ ((ub - 1) :: nil).
+Proof.
+  intros lb ub H. unfold Zrange.
+  assert (H1 : Z.to_nat (ub - lb) = S (Z.to_nat (ub - (lb + 1)))).
+  { rewrite <- Z2Nat.inj_succ by lia. f_equal. lia. }
+  rewrite H1. simpl. rewrite map_app. simpl. f_equal.
+  - f_equal. f_equal. f_equal. lia.
+  - f_equal. rewrite Z2Nat.id; lia.
+Qed.
+
+Lemma Zrange_in :
+  forall lb ub n, In n (Zrange lb ub) <-> lb <= n < ub.
+Proof.
+  intros lb ub n.
+  unfold Zrange. rewrite in_map_iff. split.
+  - intros [x [Hx1 Hx2]]; rewrite n_range_in in Hx2.
+    apply Nat2Z.inj_lt in Hx2.
+    rewrite Z2Nat.id in Hx2; [lia|].
+    destruct (ub - lb); simpl in *; lia.
+  - intros H. exists (Z.to_nat (n - lb)). split.
+    + rewrite Z2Nat.id; lia.
+    + rewrite n_range_in. apply Z2Nat.inj_lt; lia.
+Qed.
+
+Theorem poly_lex_concat_seq :
+  forall to_scans lb ub prog mem1 mem2,
+    iter_semantics (fun x => poly_lex_semantics (to_scans x) prog) lb ub mem1 mem2 ->
+    (forall x, wf_scan (to_scans x)) ->
+    (forall x1 x2 n p, to_scans x1 n p = true -> to_scans x2 n p = true -> x1 = x2) ->
+    (forall x1 n1 p1 x2 n2 p2, lex_compare p2 p1 = Lt -> to_scans x1 n1 p1 = true -> to_scans x2 n2 p2 = true -> x2 <= x1) ->
+    poly_lex_semantics (fun n p => existsb (fun x => to_scans x n p) (Zrange lb ub)) prog mem1 mem2.
+Proof.
+  intros to_scans lb ub prog mem1 mem2 Hsem.
+  induction Hsem as [lb ub mem Hempty|lb ub mem1 mem2 mem3 Hcontinue Hsem1 Hsem2 IH].
+  - intros Hwf Hscans Hcmp.
+    rewrite Zrange_empty by lia. simpl.
+    apply PolyLexDone; auto.
+  - intros Hwf Hscans Hcmp.
+    eapply poly_lex_semantics_extensionality.
+    + eapply poly_lex_concat; [exact Hsem1| | | |apply IH; auto].
+      * apply Hwf.
+      * intros n p. simpl.
+        destruct (to_scans lb n p) eqn:Hscanl; [|auto]. right.
+        apply not_true_is_false; rewrite existsb_exists; intros [x [Hin Hscanx]].
+        rewrite Zrange_in in Hin. specialize (Hscans lb x n p Hscanl Hscanx). lia.
+      * intros n1 p1 n2 p2 H.
+        destruct (to_scans lb n1 p1) eqn:Hscanl; [|auto]. right.
+        apply not_true_is_false; rewrite existsb_exists; intros [x [Hin Hscanx]].
+        rewrite Zrange_in in Hin. specialize (Hcmp lb n1 p1 x n2 p2 H Hscanl Hscanx). lia.
+    + intros n p. simpl. rewrite Zrange_begin with (lb := lb) by lia.
+      simpl. reflexivity.
+Qed.
+
 Definition insert_zeros (d : nat) (i : nat) (l : vector) := resize i l ++ repeat 0 d ++ skipn i l.
 Definition insert_zeros_constraint (d : nat) (i : nat) (c : vector * Z) := (insert_zeros d i (fst c), snd c).
 

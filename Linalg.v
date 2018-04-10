@@ -181,6 +181,22 @@ Proof.
   induction n; auto.
 Qed.
 
+Lemma same_length_eq :
+  forall xs ys, length xs = length ys -> xs =v= ys -> xs = ys.
+Proof.
+  induction xs.
+  - intros ys Hlen Heq. rewrite <- is_eq_veq in Heq. destruct ys; simpl in *; congruence.
+  - intros ys Hlen Heq. rewrite <- is_eq_veq in Heq. destruct ys; simpl in *; [congruence|].
+    reflect. destruct Heq; f_equal; auto.
+Qed.
+
+Instance app_proper : Proper (eq ==> veq ==> veq) (@app Z).
+Proof.
+  intros l1 l2 Hl r1 r2 Hr.
+  rewrite Hl. rewrite <- is_eq_veq.
+  rewrite is_eq_app by reflexivity. rewrite is_eq_reflexive; simpl.
+  rewrite is_eq_veq; assumption.
+Qed.
 
 (** ** Dot product *)
 
@@ -832,7 +848,14 @@ Proof.
   intros n1 n2 Hn l1 l2 Hl. rewrite Hn. apply resize_eq_compat. rewrite is_eq_veq. auto.
 Qed.
 
-
+Lemma resize_resize :
+  forall n m l, (n <= m)%nat -> resize n (resize m l) = resize n l.
+Proof.
+  induction n.
+  - intros m l H. reflexivity.
+  - intros m l H. destruct m as [|m]; [lia|].
+    destruct l; simpl; rewrite IHn by lia; reflexivity.
+Qed.
 
 
 (** ** Alternative formulation of previous results that used [++] on both sides *)

@@ -66,11 +66,6 @@ Inductive loop_semantics : stmt -> list Z -> mem -> mem -> Prop :=
     loop_semantics (Guard t st) env mem1 mem2
 | LGuardFalse : forall env t st mem,
     eval_test env t = false -> loop_semantics (Guard t st) env mem mem
-| LLoopDone : forall env lb ub st mem,
-    eval_expr env ub <= eval_expr env lb -> loop_semantics (Loop lb ub st) env mem mem
-| LLoopProgress : forall env lb ub st mem1 mem2 mem3,
-    eval_expr env lb < eval_expr env ub ->
-    loop_semantics st (eval_expr env lb :: env) mem1 mem2 ->
-    loop_semantics (Loop (Sum lb (Constant 1)) ub st) env mem2 mem3 ->
-    loop_semantics (Loop lb ub st) env mem1 mem3.
-
+| LLoop : forall env lb ub st mem1 mem2,
+    iter_semantics (fun x => loop_semantics st (x :: env)) (eval_expr env lb) (eval_expr env ub) mem1 mem2 ->
+    loop_semantics (Loop lb ub st) env mem1 mem2.
