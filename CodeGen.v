@@ -125,7 +125,7 @@ Proof.
   intros. rewrite make_linear_expr_correct_aux by lia. f_equal. f_equal. apply firstn_all2. lia.
 Qed.
 
-Definition make_affine_expr (n : nat) (e : (vector * Z)%type) := Sum (make_linear_expr n (fst e)) (Constant (snd e)).
+Definition make_affine_expr (n : nat) (e : (list Z * Z)%type) := Sum (make_linear_expr n (fst e)) (Constant (snd e)).
 
 Theorem make_affine_expr_correct :
   forall n e env, length env = n -> eval_expr env (make_affine_expr n e) = dot_product (fst e) (rev env) + snd e.
@@ -133,21 +133,271 @@ Proof.
   intros. simpl in *. rewrite make_linear_expr_correct; auto.
 Qed.
 
-Parameter project : nat -> polyhedron -> result polyhedron.
-Parameter find_lower_bound : nat -> polyhedron -> result expr.
-Parameter find_upper_bound : nat -> polyhedron -> result expr.
+Lemma dot_product_resize_left :
+  forall t1 t2, dot_product (resize (length t2) t1) t2 = dot_product t1 t2.
+Proof.
+  intros t1 t2. rewrite <- app_nil_r with (l := t2) at 3. rewrite dot_product_app_right.
+  rewrite dot_product_nil_right; lia.
+Qed.
 
-Axiom project_inclusion :
-  forall n p pol proj, project n pol = Ok proj -> in_poly p pol = true -> in_poly (resize n p) proj = true.
-Axiom project_reverse_inclusion :
-  forall n pol proj c, project n pol = Ok proj -> In c pol -> fst c =v= resize n (fst c) -> (exists c', c =c= c' /\ In c' proj).
+Lemma dot_product_resize_right :
+  forall t1 t2, dot_product t1 (resize (length t1) t2) = dot_product t1 t2.
+Proof.
+  intros. rewrite dot_product_commutative. rewrite dot_product_resize_left.
+  rewrite dot_product_commutative. auto.
+Qed.
 
-Axiom find_lower_bound_correct :
+
+Lemma nth_skipn :
+  forall A n m (l : list A) d, nth n (skipn m l) d = nth (m + n) l d.
+Proof.
+  induction m.
+  - intros. simpl. reflexivity.
+  - intros. simpl.
+    destruct l; simpl.
+    + destruct n; reflexivity.
+    + apply IHm.
+Qed.
+
+Lemma div_lt_iff :
+  forall x y z, 0 < y -> x / y < z <-> x < y * z.
+Proof.
+  intros x y z Hy; split; intro H.
+  - apply Z.nle_gt; intro H2. apply Z.div_le_lower_bound in H2; lia.
+  - apply Z.div_lt_upper_bound; auto.
+Qed.
+
+Lemma div_le_iff :
+  forall x y z, 0 < y -> x / y <= z <-> x <= y * z + y - 1.
+Proof.
+  intros x y z Hy. rewrite <- Z.lt_succ_r. rewrite div_lt_iff by lia. nia.
+Qed.
+
+Lemma div_ge_iff :
+  forall x y z, 0 < z -> x <= y / z <-> x * z <= y.
+Proof.
+  intros x y z Hz. rewrite <- !Z.nlt_ge. apply not_iff_compat. rewrite div_lt_iff by lia. nia.
+Qed.
+
+Lemma div_gt_iff :
+  forall x y z, 0 < z -> x < y / z <-> x * z + z - 1 < y.
+Proof.
+  intros x y z Hz. rewrite <- !Z.nle_gt. apply not_iff_compat. rewrite div_le_iff by lia. nia.
+Qed.
+
+Definition make_lower_bound n c :=
+  Div (Sum (Constant ((- nth n (fst c) 0) - 1)) (make_affine_expr n (fst c, -(snd c)))) (-(nth n (fst c) 0)).
+Lemma make_lower_bound_correct :
+  forall n c env x, length env = n -> nth n (fst c) 0 < 0 -> (eval_expr env (make_lower_bound n c) <= x <-> satisfies_constraint (rev env ++ x :: nil) c = true).
+Proof.
+  intros n c env x Hlen Hneg.
+  unfold satisfies_constraint. simpl.
+  reflect.
+  rewrite make_linear_expr_correct by auto.
+  rewrite dot_product_app_left, dot_product_resize_right, dot_product_commutative.
+  rewrite rev_length, Hlen.
+  replace (dot_product (x :: nil) (skipn n (fst c))) with (x * nth n (fst c) 0) at 1;
+    [| transitivity (x * nth 0 (skipn n (fst c)) 0);
+       [ rewrite nth_skipn; f_equal; f_equal; lia
+       | destruct (skipn n (fst c)) as [|z l]; [|destruct l]; simpl; lia
+       ]
+    ].
+  rewrite div_le_iff by lia. nia.
+Qed.
+Definition make_upper_bound n c :=
+  Div (Sum (Constant (nth n (fst c) 0)) (make_affine_expr n (mult_vector (-1) (fst c), snd c))) (nth n (fst c) 0).
+Lemma make_upper_bound_correct :
+  forall n c env x, length env = n -> 0 < nth n (fst c) 0 -> (x < eval_expr env (make_upper_bound n c) <-> satisfies_constraint (rev env ++ x :: nil) c = true).
+Proof.
+  intros n c env x Hlen Hpos.
+  unfold satisfies_constraint. simpl.
+  reflect.
+  rewrite make_linear_expr_correct by auto. rewrite dot_product_mult_left.
+  rewrite dot_product_app_left, dot_product_resize_right, dot_product_commutative.
+  rewrite rev_length, Hlen.
+  replace (dot_product (x :: nil) (skipn n (fst c))) with (x * nth n (fst c) 0) at 1;
+    [| transitivity (x * nth 0 (skipn n (fst c)) 0);
+       [ rewrite nth_skipn; f_equal; f_equal; lia
+       | destruct (skipn n (fst c)) as [|z l]; [|destruct l]; simpl; lia
+       ]
+    ].
+  rewrite div_gt_iff by lia. nia.
+Qed.
+Opaque make_lower_bound make_upper_bound.
+
+Fixpoint find_lower_bound_aux (e : option expr) (n : nat) (p : polyhedron) :=
+  match p with
+  | nil => match e with Some e => Ok e | None => Err "No lower bound found" end
+  | c :: p => if nth n (fst c) 0 <? 0 then
+               find_lower_bound_aux (Some (match e with Some e => Max e (make_lower_bound n c) | None => make_lower_bound n c end)) n p
+             else
+               find_lower_bound_aux e n p
+  end.
+Lemma find_lower_bound_aux_correct :
+  forall n pol env x e lb, find_lower_bound_aux e n pol = Ok lb -> length env = n ->
+                      eval_expr env lb <= x <->
+                      ((match e with Some e => eval_expr env e <= x | None => True end) /\
+                       forall c, In c pol -> nth n (fst c) 0 < 0 -> satisfies_constraint (rev env ++ x :: nil) c = true).
+Proof.
+  intros n pol. induction pol.
+  - intros env x e lb Hlb Hlength. simpl in *.
+    destruct e; simpl in *; [|congruence].
+    injection Hlb as Hlb; rewrite Hlb.
+    split; intros H; tauto.
+  - intros env x e lb Hlb Hlen. simpl in *.
+    destruct (nth n (fst a) 0 <? 0) eqn:Hcmp.
+    + reflect. rewrite IHpol; eauto; simpl.
+      destruct e; simpl; [rewrite Z.max_lub_iff|]; rewrite make_lower_bound_correct by auto; split.
+      * intros [[H1 H2] H3]. split; auto. intros c [Hce|Hcin] Hcnth; [congruence|auto].
+      * intros [H1 H2]. split; [split|]; auto.
+      * intros [H1 H2]. split; auto. intros c [Hce|Hcin] Hcnth; [congruence|auto].
+      * intros [H1 H2]. split; auto.
+    + reflect. rewrite IHpol; eauto; simpl. f_equiv. split.
+      * intros H c [Hce|Hcin] Hcnth; auto; rewrite Hce in *; lia.
+      * intros H c Hcin Hcnth; auto.
+Qed.
+
+Fixpoint find_upper_bound_aux (e : option expr) (n : nat) (p : polyhedron) :=
+  match p with
+  | nil => match e with Some e => Ok e | None => Err "No upper bound found" end
+  | c :: p => if 0 <? nth n (fst c) 0 then
+               find_upper_bound_aux (Some (match e with Some e => Min e (make_upper_bound n c) | None => make_upper_bound n c end)) n p
+             else
+               find_upper_bound_aux e n p
+  end.
+Lemma find_upper_bound_aux_correct :
+  forall n pol env x e ub, find_upper_bound_aux e n pol = Ok ub -> length env = n ->
+                      x < eval_expr env ub <->
+                      ((match e with Some e => x < eval_expr env e | None => True end) /\
+                       forall c, In c pol -> 0 < nth n (fst c) 0 -> satisfies_constraint (rev env ++ x :: nil) c = true).
+Proof.
+  intros n pol. induction pol.
+  - intros env x e ub Hub Hlength. simpl in *.
+    destruct e; simpl in *; [|congruence].
+    injection Hub as Hub; rewrite Hub.
+    split; intros H; tauto.
+  - intros env x e lb Hub Hlen. simpl in *.
+    destruct (0 <? nth n (fst a) 0) eqn:Hcmp.
+    + reflect. rewrite IHpol; eauto; simpl.
+      destruct e; simpl; [rewrite Z.min_glb_lt_iff|]; rewrite make_upper_bound_correct by auto; split.
+      * intros [[H1 H2] H3]. split; auto. intros c [Hce|Hcin] Hcnth; [congruence|auto].
+      * intros [H1 H2]. split; [split|]; auto.
+      * intros [H1 H2]. split; auto. intros c [Hce|Hcin] Hcnth; [congruence|auto].
+      * intros [H1 H2]. split; auto.
+    + reflect. rewrite IHpol; eauto; simpl. f_equiv. split.
+      * intros H c [Hce|Hcin] Hcnth; auto; rewrite Hce in *; lia.
+      * intros H c Hcin Hcnth; auto.
+Qed.
+
+Definition find_lower_bound := find_lower_bound_aux None.
+Definition find_upper_bound := find_upper_bound_aux None.
+
+Theorem find_lower_bound_correct :
   forall n pol env x lb, find_lower_bound n pol = Ok lb -> length env = n ->
                     eval_expr env lb <= x <-> (forall c, In c pol -> nth n (fst c) 0 < 0 -> satisfies_constraint (rev env ++ x :: nil) c = true).
-Axiom find_upper_bound_correct :
+Proof.
+  intros n pol env x lb Hlb Hlen.
+  rewrite find_lower_bound_aux_correct by eauto. simpl. tauto.
+Qed.
+
+Theorem find_upper_bound_correct :
   forall n pol env x ub, find_upper_bound n pol = Ok ub -> length env = n ->
-                    x < eval_expr env ub <-> (forall c, In c pol -> nth n (fst c) 0 > 0 -> satisfies_constraint (rev env ++ x :: nil) c = true).
+                    x < eval_expr env ub <-> (forall c, In c pol -> 0 < nth n (fst c) 0 -> satisfies_constraint (rev env ++ x :: nil) c = true).
+
+Proof.
+  intros n pol env x ub Hub Hlen.
+  rewrite find_upper_bound_aux_correct by eauto. simpl. tauto.
+Qed.
+
+Parameter untrusted_project : nat -> polyhedron -> (polyhedron * list witness)%type.
+
+Definition project n p :=
+  let (res, wits) := untrusted_project n p in
+  if negb (length res =? length wits)%nat then
+    Err "Incorrect number of witnesses"
+  else if negb (forallb (fun c => is_eq (fst c) (resize n (fst c))) res) then
+    Err "Constraint too long"
+  else if negb (forallb (fun z => is_redundant (snd z) p (fst z)) (combine res wits)) then
+    Err "Witness checking failed"
+  else if negb (forallb (fun c => negb (is_eq (fst c) (resize n (fst c))) || existsb (fun c' => is_eq (fst c) (fst c') && (snd c =? snd c')) res) p) then
+    Err "Constraint removed in projection"
+  else
+    Ok res.
+
+Theorem nth_error_combine :
+  forall (A B : Type) (n : nat) (l : list A) (l' : list B) x y,
+    nth_error (combine l l') n = Some (x, y) <-> nth_error l n = Some x /\ nth_error l' n = Some y.
+Proof.
+  induction n.
+  - intros l l' x y; destruct l; destruct l'; simpl in *; split; (intros [H1 H2] || (intros H; split)); congruence.
+  - intros l l' x y; destruct l; destruct l'; simpl in *; split; (intros [H1 H2] || (intros H; split)); try congruence.
+    + rewrite IHn in H; destruct H; auto.
+    + rewrite IHn in H; destruct H; auto.
+    + rewrite IHn; auto.
+Qed.
+
+Theorem in_l_combine :
+  forall (A B : Type) (l : list A) (l': list B) x,
+    length l = length l' -> In x l -> (exists y, In (x, y) (combine l l')).
+Proof.
+  intros A B l l' x Hlen Hin. apply In_nth_error in Hin.
+  destruct Hin as [n Hin].
+  destruct (nth_error l' n) as [y|] eqn:Heq.
+  - exists y. apply nth_error_In with (n := n). rewrite nth_error_combine. auto.
+  - rewrite nth_error_None in Heq.
+    assert (n < length l)%nat by (rewrite <- nth_error_Some; congruence).
+    lia.
+Qed.
+
+Ltac destruct_if H Heq :=
+  lazymatch goal with
+    | [ H : context[if ?X then _ else _] |- _ ] => destruct X eqn:Heq
+  end.
+
+Theorem project_inclusion :
+  forall n p pol proj, project n pol = Ok proj -> in_poly p pol = true -> in_poly (resize n p) proj = true.
+Proof.
+  intros n p pol proj Hok Hin.
+  unfold project in Hok.
+  destruct (untrusted_project n pol) as [res wits].
+  destruct_if Hok Hlen; reflect; [congruence|].
+  destruct_if Hok Hresize; reflect; [congruence|].
+  destruct_if Hok Hwits; reflect; [congruence|].
+  destruct_if Hok Hpreserve; reflect; [congruence|].
+  injection Hok as Hok; rewrite Hok in *.
+  assert (Hinproj : in_poly p proj = true).
+  - unfold in_poly. rewrite forallb_forall. intros c Hc.
+    apply in_l_combine with (l' := wits) in Hc; [|auto].
+    destruct Hc as [wit Hwit].
+    eapply is_redundant_correct; [|apply Hin].
+    rewrite forallb_forall in Hwits.
+    apply (Hwits (c, wit)); auto.
+  - unfold in_poly in *. rewrite forallb_forall in *. intros c Hc.
+    rewrite <- (Hinproj c) by auto.
+    unfold satisfies_constraint. f_equal. specialize (Hresize c Hc). reflect.
+    rewrite Hresize.
+    rewrite <- dot_product_resize_left with (t1 := p). rewrite resize_length. reflexivity.
+Qed.
+
+Theorem project_reverse_inclusion :
+  forall n pol proj c, project n pol = Ok proj -> In c pol -> fst c =v= resize n (fst c) -> (exists c', c =c= c' /\ In c' proj).
+Proof.
+  intros n pol proj c Hok Hin Heq.
+  unfold project in Hok.
+  destruct (untrusted_project n pol) as [res wits].
+  destruct_if Hok Hlen; reflect; [congruence|].
+  destruct_if Hok Hresize; reflect; [congruence|].
+  destruct_if Hok Hwits; reflect; [congruence|].
+  destruct_if Hok Hpreserve; reflect; [congruence|].
+  injection Hok as Hok; rewrite Hok in *.
+  rewrite forallb_forall in Hpreserve. specialize (Hpreserve c Hin).
+  reflect.
+  rewrite <- is_eq_veq in Heq; rewrite Heq in Hpreserve.
+  destruct Hpreserve as [Hpreserve | Hpreserve]; [congruence|].
+  rewrite existsb_exists in Hpreserve.
+  destruct Hpreserve as [c' [Hin2 Heqc']].
+  exists c'. reflect. auto.
+Qed.
 
 Theorem find_bounds_correct :
   forall n pol env x lb ub, find_lower_bound n pol = Ok lb -> find_upper_bound n pol = Ok ub -> length env = n ->
@@ -189,17 +439,6 @@ Proof.
   unfold env_scan in Hscan. destruct (nth_error polys m); [|congruence].
   reflect. destruct Hscan as [[Heq1 Heq2] Heq3]. rewrite Hlen in Heq1.
   rewrite Heq1. symmetry. auto.
-Qed.
-
-Lemma nth_skipn :
-  forall A n m (l : list A) d, nth n (skipn m l) d = nth (m + n) l d.
-Proof.
-  induction m.
-  - intros. simpl. reflexivity.
-  - intros. simpl.
-    destruct l; simpl.
-    + destruct n; reflexivity.
-    + apply IHm.
 Qed.
 
 Lemma env_scan_split :

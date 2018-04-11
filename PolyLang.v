@@ -14,8 +14,8 @@ Require Import Setoid Morphisms.
 Record Polyhedral_Instruction := {
   pi_instr : instr ;
   pi_poly : polyhedron ;
-  pi_schedule : list (vector * Z)%type ;
-  pi_transformation : list (vector * Z)%type ;
+  pi_schedule : list (list Z * Z)%type ;
+  pi_transformation : list (list Z * Z)%type ;
 }.
 
 
@@ -39,7 +39,7 @@ Hint Unfold wf_scan. *)
 Notation "'wf_scan'" := (Proper (eq ==> veq ==> eq)) (only parsing).
 (* forall n p q, is_eq p q = true -> to_scan n p = to_scan n q. *)
 
-Inductive poly_semantics : (nat -> vector -> bool) -> Poly_Program -> mem -> mem -> Prop :=
+Inductive poly_semantics : (nat -> list Z -> bool) -> Poly_Program -> mem -> mem -> Prop :=
 | PolyDone : forall to_scan prog mem, (forall n p, to_scan n p = false) -> poly_semantics to_scan prog mem mem
 | PolyProgress : forall to_scan prog mem1 mem2 mem3 poly_instr n p,
     to_scan n p = true -> nth_error prog n = Some poly_instr ->
@@ -104,7 +104,7 @@ Proof.
 Qed.
 
 (* Semantics with an identity schedule. *)
-Inductive poly_lex_semantics : (nat -> vector -> bool) -> Poly_Program -> mem -> mem -> Prop :=
+Inductive poly_lex_semantics : (nat -> list Z -> bool) -> Poly_Program -> mem -> mem -> Prop :=
 | PolyLexDone : forall to_scan prog mem, (forall n p, to_scan n p = false) -> poly_lex_semantics to_scan prog mem mem
 | PolyLexProgress : forall to_scan prog mem1 mem2 mem3 poly_instr n p,
     to_scan n p = true -> nth_error prog n = Some poly_instr ->
@@ -260,8 +260,8 @@ Proof.
       simpl. reflexivity.
 Qed.
 
-Definition insert_zeros (d : nat) (i : nat) (l : vector) := resize i l ++ repeat 0 d ++ skipn i l.
-Definition insert_zeros_constraint (d : nat) (i : nat) (c : vector * Z) := (insert_zeros d i (fst c), snd c).
+Definition insert_zeros (d : nat) (i : nat) (l : list Z) := resize i l ++ repeat 0 d ++ skipn i l.
+Definition insert_zeros_constraint (d : nat) (i : nat) (c : list Z * Z) := (insert_zeros d i (fst c), snd c).
 
 Fixpoint make_null_poly (d : nat) (n : nat) :=
   match n with
@@ -269,7 +269,7 @@ Fixpoint make_null_poly (d : nat) (n : nat) :=
   | S n => (repeat 0 d ++ (-1 :: nil), 0) :: (repeat 0 d ++ (1 :: nil), 0) :: make_null_poly (S d) n
   end.
 
-Fixpoint make_sched_poly (d : nat) (i : nat) (env_size : nat) (l : list (vector * Z)) :=
+Fixpoint make_sched_poly (d : nat) (i : nat) (env_size : nat) (l : list (list Z * Z)) :=
   (* add scheduling constraints in polyhedron after env, so that with fixed env, lexicographical ordering preserves semantics *)
   match l with
   | nil => make_null_poly (i + env_size)%nat (d - i)%nat
@@ -443,16 +443,16 @@ Proof.
       * intros n0 p0 H. unfold scanned. rewrite Hout; auto.
 Qed.
 
-Definition env_scan (prog : Poly_Program) (env : vector) (dim : nat) (n : nat) (p : vector) :=
+Definition env_scan (prog : Poly_Program) (env : list Z) (dim : nat) (n : nat) (p : list Z) :=
   match nth_error prog n with
   | Some pi => is_eq env (resize (length env) p) && is_eq p (resize dim p) && in_poly p pi.(pi_poly)
   | None => false
   end.
 
-Definition env_poly_semantics (env : vector) (dim : nat) (prog : Poly_Program) (mem1 mem2 : mem) :=
+Definition env_poly_semantics (env : list Z) (dim : nat) (prog : Poly_Program) (mem1 mem2 : mem) :=
   poly_semantics (env_scan prog env dim) prog mem1 mem2.
 
-Definition env_poly_lex_semantics (env : vector) (dim : nat) (prog : Poly_Program) (mem1 mem2 : mem) :=
+Definition env_poly_lex_semantics (env : list Z) (dim : nat) (prog : Poly_Program) (mem1 mem2 : mem) :=
   poly_lex_semantics (env_scan prog env dim) prog mem1 mem2.
 
 Instance env_scan_proper : forall prog env dim, Proper (eq ==> veq ==> eq) (env_scan prog env dim).

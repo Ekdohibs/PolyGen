@@ -11,8 +11,6 @@ Open Scope Z_scope.
 Open Scope list_scope.
 Open Scope vector_scope.
 
-Definition vector := list Z.
-
 (** ** Equality on vectors *)
 (** Two vectors are equal iff they are so up to trailing zeros. *)
 
@@ -20,7 +18,7 @@ Definition is_null xs := forallb (fun x => x =? 0) xs.
 Transparent is_null.
 Hint Unfold is_null.
 
-Fixpoint is_eq (xs ys : vector) :=
+Fixpoint is_eq (xs ys : list Z) :=
   match xs, ys with
   | nil, nil => true
   | nil, ys => is_null ys
@@ -200,7 +198,7 @@ Qed.
 
 (** ** Dot product *)
 
-Fixpoint dot_product (xs ys : vector) :=
+Fixpoint dot_product (xs ys : list Z) :=
   match xs, ys with
   | _, nil | nil, _ => 0
   | x :: xs, y :: ys => x * y + dot_product xs ys
@@ -289,10 +287,9 @@ Qed.
 
 (** ** Constraints and polyhedra *)
 
-Definition constraint := (vector * Z)%type.
+Definition constraint := (list Z * Z)%type.
 
-Definition satisfies_constraint (p : vector) (c : constraint) :=
-  dot_product p (fst c) <=? (snd c).
+Definition satisfies_constraint p c := dot_product p (fst c) <=? (snd c).
 Transparent satisfies_constraint.
 Hint Unfold satisfies_constraint.
 
@@ -308,8 +305,7 @@ Qed.
 
 Definition polyhedron := list constraint.
 
-Definition in_poly (p : vector) (pol : polyhedron) :=
-  forallb (satisfies_constraint p) pol.
+Definition in_poly p pol := forallb (satisfies_constraint p) pol.
 Instance in_poly_proper : Proper (veq ==> eq ==> eq) in_poly.
 Proof.
   intros p1 p2 H1 pol1 pol2 H2.
@@ -345,7 +341,7 @@ Qed.
 
 (** ** Multiplying a vector by a constant *)
 
-Definition mult_vector (k : Z) (xs : vector) := map (fun x => k * x) xs.
+Definition mult_vector k xs := map (fun x => k * x) xs.
 Definition mult_constraint (k : Z) (c : constraint) :=
   (mult_vector k (fst c), k * snd c).
 Transparent mult_constraint.
@@ -437,7 +433,7 @@ Qed.
 
 (** ** Adding two vectors *)
 
-Fixpoint add_vector (xs ys : vector) :=
+Fixpoint add_vector xs ys :=
   match xs, ys with
   | nil, nil => nil
   | nil, ys => ys
@@ -592,7 +588,7 @@ Proof.
   rewrite Heq in Hsat. lia.
 Qed.
 
-Definition witness := (vector * Z)%type.
+Definition witness := (list Z * Z)%type.
 
 Definition is_redundant (wit : witness) (pol : polyhedron) (c : constraint) :=
   (0 <? snd wit) &&
@@ -762,7 +758,7 @@ Qed.
 
 (** ** Resizing a vector to a fixed size *)
 
-Fixpoint resize (d : nat) (l : vector) :=
+Fixpoint resize (d : nat) (l : list Z) :=
   match d with
   | O => nil
   | S d => match l with nil => 0 :: resize d nil | x :: l => x :: resize d l end
