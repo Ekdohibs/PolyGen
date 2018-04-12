@@ -11,7 +11,8 @@ Open Scope Z_scope.
 Open Scope list_scope.
 Open Scope vector_scope.
 
-(** ** Equality on vectors *)
+(** * Equality on vectors *)
+
 (** Two vectors are equal iff they are so up to trailing zeros. *)
 
 Definition is_null xs := forallb (fun x => x =? 0) xs.
@@ -196,7 +197,7 @@ Proof.
   rewrite is_eq_veq; assumption.
 Qed.
 
-(** ** Dot product *)
+(** * Dot product *)
 
 Fixpoint dot_product (xs ys : list Z) :=
   match xs, ys with
@@ -285,7 +286,7 @@ Proof.
 Qed.
 
 
-(** ** Constraints and polyhedra *)
+(** * Constraints and polyhedra *)
 
 Definition constraint := (list Z * Z)%type.
 
@@ -339,7 +340,7 @@ Qed.
 
 
 
-(** ** Multiplying a vector by a constant *)
+(** * Multiplying a vector by a constant *)
 
 Definition mult_vector k xs := map (fun x => k * x) xs.
 Definition mult_constraint (k : Z) (c : constraint) :=
@@ -431,7 +432,7 @@ Proof.
 Qed.
 
 
-(** ** Adding two vectors *)
+(** * Adding two vectors *)
 
 Fixpoint add_vector xs ys :=
   match xs, ys with
@@ -530,7 +531,7 @@ Proof.
   f_equal; apply dot_product_commutative.
 Qed.
 
-(** ** Adding constraints *)
+(** * Adding constraints *)
 
 Definition add_constraint c1 c2 := (add_vector (fst c1) (fst c2), snd c1 + snd c2).
 Transparent add_constraint.
@@ -552,7 +553,7 @@ Proof.
 Qed.
 
 
-(** ** Certificates for polyhedral operations *)
+(** * Certificates for polyhedral operations *)
 
 Definition same_polyhedron pol1 pol2 := forall p, in_poly p pol1 = in_poly p pol2.
 
@@ -628,7 +629,7 @@ Qed.
 
 
 
-(** ** Lexicographical ordering of vectors *)
+(** * Lexicographical ordering of vectors *)
 
 Fixpoint lex_compare_nil t :=
   match t with
@@ -743,7 +744,7 @@ Qed.
 
 
 
-(** ** Product of an affine matrix with a vector *)
+(** * Product of an affine matrix with a vector *)
 
 Definition affine_product mat p := map (fun t => dot_product (fst t) p + (snd t)) mat.
 
@@ -756,7 +757,7 @@ Qed.
 
 
 
-(** ** Resizing a vector to a fixed size *)
+(** * Resizing a vector to a fixed size *)
 
 Fixpoint resize (d : nat) (l : list Z) :=
   match d with
@@ -854,7 +855,7 @@ Proof.
 Qed.
 
 
-(** ** Alternative formulation of previous results that used [++] on both sides *)
+(** Alternative formulation of previous results that used [++] on both sides *)
 
 Lemma dot_product_app_left :
   forall l1 l2 l3, dot_product (l1 ++ l2) l3 = dot_product l1 (resize (length l1) l3) + dot_product l2 (skipn (length l1) l3).

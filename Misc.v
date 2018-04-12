@@ -40,6 +40,6 @@ Proof.
 Qed.
 
 Hint Rewrite andb_true_iff andb_false_iff orb_true_iff orb_false_iff negb_true_iff negb_false_iff: reflect.
-Hint Rewrite Z.eqb_eq Z.leb_le Z.eqb_neq Z.leb_gt Z.ltb_lt Z.ltb_ge Z.gtb_gt Z.gtb_le Z.compare_eq_iff Z.compare_lt_iff Z.compare_gt_iff : reflect.
+Hint Rewrite Z.eqb_eq Z.leb_le Z.eqb_neq Z.leb_gt Z.ltb_lt Z.ltb_ge Z.gtb_ltb Z.geb_leb Z.compare_eq_iff Z.compare_lt_iff Z.compare_gt_iff : reflect.
 Hint Rewrite Nat.eqb_eq Nat.leb_le Nat.eqb_neq Nat.leb_gt Nat.ltb_lt Nat.ltb_ge : reflect.
 Ltac reflect := autorewrite with reflect in *.
