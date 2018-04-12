@@ -3,9 +3,13 @@ Require Import Psatz.
 
 Open Scope Z_scope.
 
+(** * The basic instructions and their semantics *)
+
 Parameter instr : Type.
 Parameter mem : Type.
 Parameter instr_semantics : instr -> list Z -> mem -> mem -> Prop.
+
+(** * Iterating semantics between two bounds *)
 
 Inductive iter_semantics (P : Z -> mem -> mem -> Prop) : Z -> Z -> mem -> mem -> Prop :=
 | IDone : forall lb ub mem, ub <= lb -> iter_semantics P lb ub mem mem

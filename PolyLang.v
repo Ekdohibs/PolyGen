@@ -11,13 +11,14 @@ Require Import Instr.
 Require Import Misc.
 Require Import Setoid Morphisms.
 
+(** * The semantics of polyhedral programs with schedules *)
+
 Record Polyhedral_Instruction := {
   pi_instr : instr ;
   pi_poly : polyhedron ;
   pi_schedule : list (list Z * Z)%type ;
   pi_transformation : list (list Z * Z)%type ;
 }.
-
 
 Definition Poly_Program := list Polyhedral_Instruction.
 
@@ -103,7 +104,8 @@ Proof.
            reflect. destruct Hd as [Heqp Hn]. rewrite Heqp, Hn in Hscanp. congruence.
 Qed.
 
-(* Semantics with an identity schedule. *)
+(** * The semantics of polyhedral programs with lexicographical ordering *)
+
 Inductive poly_lex_semantics : (nat -> list Z -> bool) -> Poly_Program -> mem -> mem -> Prop :=
 | PolyLexDone : forall to_scan prog mem, (forall n p, to_scan n p = false) -> poly_lex_semantics to_scan prog mem mem
 | PolyLexProgress : forall to_scan prog mem1 mem2 mem3 poly_instr n p,
@@ -155,82 +157,6 @@ Proof.
            reflect. destruct Hd as [Heqp Hn]. rewrite Heqp, Hn in Hscanp. congruence.
 Qed.
 
-Fixpoint n_range (n : nat) :=
-  match n with
-  | O => nil
-  | S n => (n_range n) ++ (n :: nil)
-  end.
-
-Lemma n_range_in :
-  forall n m, In m (n_range n) <-> (m < n)%nat.
-Proof.
-  induction n.
-  - intros. simpl in *. split; [intro; exfalso; auto | apply Nat.nlt_0_r].
-  - intros m. simpl in *. split.
-    + intros H. apply in_app_or in H. destruct H as [H | H].
-      * rewrite IHn in H. lia.
-      * simpl in H. destruct H; [lia | exfalso; auto].
-    + intros H. apply in_or_app. destruct (Nat.eq_dec n m).
-      * right; simpl; auto.
-      * left; rewrite IHn; lia.
-Qed.
-
-Lemma n_range_begin :
-  forall n, n_range (S n) = 0%nat :: (map S (n_range n)).
-Proof.
-  induction n.
-  - simpl in *. auto.
-  - simpl in *. rewrite IHn at 1. simpl.
-    f_equal. rewrite map_app. simpl. reflexivity.
-Qed.
-
-Definition Zrange lb ub := map (fun n => lb + Z.of_nat n) (n_range (Z.to_nat (ub - lb))).
-
-Lemma Zrange_empty :
-  forall lb ub, lb >= ub -> Zrange lb ub = nil.
-Proof.
-  intros lb ub H. unfold Zrange.
-  assert (H1 : Z.to_nat (ub - lb) = 0%nat).
-  { destruct (ub - lb) eqn:Hdiff; (reflexivity || lia). }
-  rewrite H1. reflexivity.
-Qed.
-
-Lemma Zrange_begin :
-  forall lb ub, lb < ub -> Zrange lb ub = lb :: Zrange (lb + 1) ub.
-Proof.
-  intros lb ub H. unfold Zrange.
-  assert (H1 : Z.to_nat (ub - lb) = S (Z.to_nat (ub - (lb + 1)))).
-  { rewrite <- Z2Nat.inj_succ by lia. f_equal. lia. }
-  rewrite H1. rewrite n_range_begin. simpl. f_equal.
-  - lia.
-  - rewrite map_map; apply map_ext. intro; lia.
-Qed.
-
-Lemma Zrange_end :
-  forall lb ub, lb < ub -> Zrange lb ub = Zrange lb (ub - 1) ++ ((ub - 1) :: nil).
-Proof.
-  intros lb ub H. unfold Zrange.
-  assert (H1 : Z.to_nat (ub - lb) = S (Z.to_nat (ub - (lb + 1)))).
-  { rewrite <- Z2Nat.inj_succ by lia. f_equal. lia. }
-  rewrite H1. simpl. rewrite map_app. simpl. f_equal.
-  - f_equal. f_equal. f_equal. lia.
-  - f_equal. rewrite Z2Nat.id; lia.
-Qed.
-
-Lemma Zrange_in :
-  forall lb ub n, In n (Zrange lb ub) <-> lb <= n < ub.
-Proof.
-  intros lb ub n.
-  unfold Zrange. rewrite in_map_iff. split.
-  - intros [x [Hx1 Hx2]]; rewrite n_range_in in Hx2.
-    apply Nat2Z.inj_lt in Hx2.
-    rewrite Z2Nat.id in Hx2; [lia|].
-    destruct (ub - lb); simpl in *; lia.
-  - intros H. exists (Z.to_nat (n - lb)). split.
-    + rewrite Z2Nat.id; lia.
-    + rewrite n_range_in. apply Z2Nat.inj_lt; lia.
-Qed.
-
 Theorem poly_lex_concat_seq :
   forall to_scans lb ub prog mem1 mem2,
     iter_semantics (fun x => poly_lex_semantics (to_scans x) prog) lb ub mem1 mem2 ->
@@ -260,15 +186,20 @@ Proof.
       simpl. reflexivity.
 Qed.
 
+(** * Translating a program from explicit scheduling to lexicographical scanning *)
+
 Definition insert_zeros (d : nat) (i : nat) (l : list Z) := resize i l ++ repeat 0 d ++ skipn i l.
 Definition insert_zeros_constraint (d : nat) (i : nat) (c : list Z * Z) := (insert_zeros d i (fst c), snd c).
 
+(** [make_null_poly d n] creates a polyhedron with the constraints that the variables from [d] to [d+n-1] are null *)
 Fixpoint make_null_poly (d : nat) (n : nat) :=
   match n with
   | O => nil
   | S n => (repeat 0 d ++ (-1 :: nil), 0) :: (repeat 0 d ++ (1 :: nil), 0) :: make_null_poly (S d) n
   end.
 
+(** [make_sched_poly d i env_size l] adds the lexicographical constraints in [l] as equalities, preserving the [env_size] first variables,
+    and inserting [d] variables after that. *)
 Fixpoint make_sched_poly (d : nat) (i : nat) (env_size : nat) (l : list (list Z * Z)) :=
   (* add scheduling constraints in polyhedron after env, so that with fixed env, lexicographical ordering preserves semantics *)
   match l with
@@ -370,6 +301,8 @@ Proof.
   rewrite insert_zeros_product_skipn. auto.
 Qed.
 
+(** * Schedule elimination is correct *)
+
 Theorem poly_elim_schedule_semantics_preserve :
   forall d es env to_scan_lex prog_lex mem1 mem2,
     poly_lex_semantics to_scan_lex prog_lex mem1 mem2 ->
@@ -443,6 +376,8 @@ Proof.
       * intros n0 p0 H. unfold scanned. rewrite Hout; auto.
 Qed.
 
+(** * Semantics in a fixed environment *)
+
 Definition env_scan (prog : Poly_Program) (env : list Z) (dim : nat) (n : nat) (p : list Z) :=
   match nth_error prog n with
   | Some pi => is_eq env (resize (length env) p) && is_eq p (resize dim p) && in_poly p pi.(pi_poly)
@@ -461,6 +396,8 @@ Proof.
   destruct (nth_error prog n2) as [pi|]; simpl; auto.
   rewrite Hp at 1 2 4; rewrite Hp at 1. reflexivity.
 Qed.
+
+(** * Schedule elimination in a fixed environment is correct as well *)
 
 Theorem poly_elim_schedule_semantics_env_preserve :
   forall d es env dim prog mem1 mem2,

@@ -3,6 +3,10 @@ Require Import List.
 Require Import Bool.
 Require Import Psatz.
 
+Open Scope Z_scope.
+
+(** * More properties of lists that are missing from the Coq library *)
+
 Lemma forallb_map :
   forall A B f (g : A -> B) l, forallb f (map g l) = forallb (fun x => f (g x)) l.
 Proof.
@@ -13,18 +17,6 @@ Lemma forallb_ext :
   forall A f g (l : list A), (forall x, f x = g x) -> forallb f l = forallb g l.
 Proof.
   intros. induction l; simpl; auto; congruence.
-Qed.
-
-Lemma forall_ext :
-  forall (A : Type) (P Q : A -> Prop), (forall x, P x <-> Q x) -> (forall x, P x) <-> (forall x, Q x).
-Proof.
-  intros A P Q H; split; intros; [rewrite <- H|rewrite H]; auto.
-Qed.
-
-Lemma exists_ext :
-  forall (A : Type) (P Q : A -> Prop), (forall x, P x <-> Q x) -> (exists x, P x) <-> (exists x, Q x).
-Proof.
-  intros A P Q H; split; intros [x Hx]; exists x; [rewrite <- H|rewrite H]; auto.
 Qed.
 
 Lemma skipn_skipn :
@@ -51,9 +43,44 @@ Proof.
   intros; rewrite nth_error_None in *; rewrite map_length; auto.
 Qed.
 
-Hint Rewrite andb_true_iff andb_false_iff orb_true_iff orb_false_iff negb_true_iff negb_false_iff: reflect.
-Hint Rewrite Z.eqb_eq Z.leb_le Z.eqb_neq Z.leb_gt Z.ltb_lt Z.ltb_ge Z.gtb_ltb Z.geb_leb Z.compare_eq_iff Z.compare_lt_iff Z.compare_gt_iff : reflect.
-Hint Rewrite Nat.eqb_eq Nat.leb_le Nat.eqb_neq Nat.leb_gt Nat.ltb_lt Nat.ltb_ge : reflect.
+Lemma nth_skipn :
+  forall A n m (l : list A) d, nth n (skipn m l) d = nth (m + n) l d.
+Proof.
+  induction m.
+  - intros. simpl. reflexivity.
+  - intros. simpl.
+    destruct l; simpl.
+    + destruct n; reflexivity.
+    + apply IHm.
+Qed.
+
+Theorem nth_error_combine :
+  forall (A B : Type) (n : nat) (l : list A) (l' : list B) x y,
+    nth_error (combine l l') n = Some (x, y) <-> nth_error l n = Some x /\ nth_error l' n = Some y.
+Proof.
+  induction n.
+  - intros l l' x y; destruct l; destruct l'; simpl in *; split; (intros [H1 H2] || (intros H; split)); congruence.
+  - intros l l' x y; destruct l; destruct l'; simpl in *; split; (intros [H1 H2] || (intros H; split)); try congruence.
+    + rewrite IHn in H; destruct H; auto.
+    + rewrite IHn in H; destruct H; auto.
+    + rewrite IHn; auto.
+Qed.
+
+Theorem in_l_combine :
+  forall (A B : Type) (l : list A) (l': list B) x,
+    length l = length l' -> In x l -> (exists y, In (x, y) (combine l l')).
+Proof.
+  intros A B l l' x Hlen Hin. apply In_nth_error in Hin.
+  destruct Hin as [n Hin].
+  destruct (nth_error l' n) as [y|] eqn:Heq.
+  - exists y. apply nth_error_In with (n := n). rewrite nth_error_combine. auto.
+  - rewrite nth_error_None in Heq.
+    assert (n < length l)%nat by (rewrite <- nth_error_Some; congruence).
+    lia.
+Qed.
+
+
+(** * Tactics for rewriting under binders *)
 
 Definition helper_lemma : forall P Q, P -> Q -> Q :=
   fun P Q _ Q_proof => Q_proof.
@@ -67,6 +94,18 @@ Ltac under_binder vartype tacr tac :=
   unfold f in *;
   clear f.
 
+Lemma forall_ext :
+  forall (A : Type) (P Q : A -> Prop), (forall x, P x <-> Q x) -> (forall x, P x) <-> (forall x, Q x).
+Proof.
+  intros A P Q H; split; intros; [rewrite <- H|rewrite H]; auto.
+Qed.
+
+Lemma exists_ext :
+  forall (A : Type) (P Q : A -> Prop), (forall x, P x <-> Q x) -> (exists x, P x) <-> (exists x, Q x).
+Proof.
+  intros A P Q H; split; intros [x Hx]; exists x; [rewrite <- H|rewrite H]; auto.
+Qed.
+
 Ltac under_forall vartype tac :=
   under_binder vartype ltac:(fun f => rewrite forall_ext with (Q := f)) tac.
 Ltac under_exists vartype tac :=
@@ -75,6 +114,13 @@ Ltac under_forall_in H vartype tac :=
   under_binder vartype ltac:(fun f => rewrite forall_ext with (Q := f) in H) tac.
 Ltac under_exists_in H vartype tac :=
   under_binder vartype ltac:(fun f => rewrite exists_ext with (Q := f) in H) tac.
+
+
+(** * The [reflect] tactic *)
+
+Hint Rewrite andb_true_iff andb_false_iff orb_true_iff orb_false_iff negb_true_iff negb_false_iff: reflect.
+Hint Rewrite Z.eqb_eq Z.leb_le Z.eqb_neq Z.leb_gt Z.ltb_lt Z.ltb_ge Z.gtb_ltb Z.geb_leb Z.compare_eq_iff Z.compare_lt_iff Z.compare_gt_iff : reflect.
+Hint Rewrite Nat.eqb_eq Nat.leb_le Nat.eqb_neq Nat.leb_gt Nat.ltb_lt Nat.ltb_ge : reflect.
 
 Ltac reflect := autorewrite with reflect in *.
 Ltac reflect_binders :=
@@ -114,9 +160,9 @@ Proof.
 Qed.
 
 Lemma test2:
-  (forall (x y : nat), (x =? y) = true) <-> (forall (x y : nat), x = y).
+  (forall (x y : Z), (x =? y) = true) <-> (forall (x y : Z), x = y).
 Proof.
-  under_forall nat ltac:(fun _ => under_forall nat ltac:(fun _ => reflect)).
+  under_forall Z ltac:(fun _ => under_forall Z ltac:(fun _ => reflect)).
   reflexivity.
 Qed.
 
@@ -126,4 +172,110 @@ Lemma test3:
 Proof.
   intros l1 l2.
   reflect_binders. reflexivity.
+Qed.
+
+(** * Integer ranges *)
+
+Fixpoint n_range (n : nat) :=
+  match n with
+  | O => nil
+  | S n => (n_range n) ++ (n :: nil)
+  end.
+
+Lemma n_range_in :
+  forall n m, In m (n_range n) <-> (m < n)%nat.
+Proof.
+  induction n.
+  - intros. simpl in *. split; [intro; exfalso; auto | apply Nat.nlt_0_r].
+  - intros m. simpl in *. split.
+    + intros H. apply in_app_or in H. destruct H as [H | H].
+      * rewrite IHn in H. lia.
+      * simpl in H. destruct H; [lia | exfalso; auto].
+    + intros H. apply in_or_app. destruct (Nat.eq_dec n m).
+      * right; simpl; auto.
+      * left; rewrite IHn; lia.
+Qed.
+
+Lemma n_range_begin :
+  forall n, n_range (S n) = 0%nat :: (map S (n_range n)).
+Proof.
+  induction n.
+  - simpl in *. auto.
+  - simpl in *. rewrite IHn at 1. simpl.
+    f_equal. rewrite map_app. simpl. reflexivity.
+Qed.
+
+Definition Zrange lb ub := map (fun n => lb + Z.of_nat n) (n_range (Z.to_nat (ub - lb))).
+
+Lemma Zrange_empty :
+  forall lb ub, lb >= ub -> Zrange lb ub = nil.
+Proof.
+  intros lb ub H. unfold Zrange.
+  assert (H1 : Z.to_nat (ub - lb) = 0%nat).
+  { destruct (ub - lb) eqn:Hdiff; (reflexivity || lia). }
+  rewrite H1. reflexivity.
+Qed.
+
+Lemma Zrange_begin :
+  forall lb ub, lb < ub -> Zrange lb ub = lb :: Zrange (lb + 1) ub.
+Proof.
+  intros lb ub H. unfold Zrange.
+  assert (H1 : Z.to_nat (ub - lb) = S (Z.to_nat (ub - (lb + 1)))).
+  { rewrite <- Z2Nat.inj_succ by lia. f_equal. lia. }
+  rewrite H1. rewrite n_range_begin. simpl. f_equal.
+  - lia.
+  - rewrite map_map; apply map_ext. intro; lia.
+Qed.
+
+Lemma Zrange_end :
+  forall lb ub, lb < ub -> Zrange lb ub = Zrange lb (ub - 1) ++ ((ub - 1) :: nil).
+Proof.
+  intros lb ub H. unfold Zrange.
+  assert (H1 : Z.to_nat (ub - lb) = S (Z.to_nat (ub - (lb + 1)))).
+  { rewrite <- Z2Nat.inj_succ by lia. f_equal. lia. }
+  rewrite H1. simpl. rewrite map_app. simpl. f_equal.
+  - f_equal. f_equal. f_equal. lia.
+  - f_equal. rewrite Z2Nat.id; lia.
+Qed.
+
+Lemma Zrange_in :
+  forall lb ub n, In n (Zrange lb ub) <-> lb <= n < ub.
+Proof.
+  intros lb ub n.
+  unfold Zrange. rewrite in_map_iff. split.
+  - intros [x [Hx1 Hx2]]; rewrite n_range_in in Hx2.
+    apply Nat2Z.inj_lt in Hx2.
+    rewrite Z2Nat.id in Hx2; [lia|].
+    destruct (ub - lb); simpl in *; lia.
+  - intros H. exists (Z.to_nat (n - lb)). split.
+    + rewrite Z2Nat.id; lia.
+    + rewrite n_range_in. apply Z2Nat.inj_lt; lia.
+Qed.
+
+(** * Results on integer division *)
+
+Lemma div_lt_iff :
+  forall x y z, 0 < y -> x / y < z <-> x < y * z.
+Proof.
+  intros x y z Hy; split; intro H.
+  - apply Z.nle_gt; intro H2. apply Z.div_le_lower_bound in H2; lia.
+  - apply Z.div_lt_upper_bound; auto.
+Qed.
+
+Lemma div_le_iff :
+  forall x y z, 0 < y -> x / y <= z <-> x <= y * z + y - 1.
+Proof.
+  intros x y z Hy. rewrite <- Z.lt_succ_r. rewrite div_lt_iff by lia. nia.
+Qed.
+
+Lemma div_ge_iff :
+  forall x y z, 0 < z -> x <= y / z <-> x * z <= y.
+Proof.
+  intros x y z Hz. rewrite <- !Z.nlt_ge. apply not_iff_compat. rewrite div_lt_iff by lia. nia.
+Qed.
+
+Lemma div_gt_iff :
+  forall x y z, 0 < z -> x < y / z <-> x * z + z - 1 < y.
+Proof.
+  intros x y z Hz. rewrite <- !Z.nle_gt. apply not_iff_compat. rewrite div_le_iff by lia. nia.
 Qed.

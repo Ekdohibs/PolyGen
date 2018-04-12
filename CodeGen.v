@@ -15,9 +15,8 @@ Require Import Instr.
 Open Scope Z_scope.
 Open Scope list_scope.
 
-Parameter instr : Type.
-Parameter mem : Type.
-Parameter instr_semantics : instr -> list Z -> mem -> mem -> Prop.
+(** * Definition and properties of the [result] type *)
+(** A result is the same as an option, but with an error message in case of failure *)
 
 Inductive result (A : Type) :=
 | Ok : A -> result A
@@ -85,6 +84,8 @@ Axiom split_poly_eq :
   forall pl r n p, split_polys pl = Ok r -> (n < length pl)%nat -> in_poly p (nth n pl nil) = existsb (fun z => in_poly p (fst z) && existsb (fun m => (m =? n)%nat) (snd z)) r.
  *)
 
+(** * Creating expressions that evaluate to a given linear function *)
+
 Fixpoint make_linear_expr (n : nat) (l : list Z) :=
   match n, l with
   | O, _ | _, nil => Constant 0
@@ -126,57 +127,7 @@ Proof.
   intros. simpl in *. rewrite make_linear_expr_correct; auto.
 Qed.
 
-Lemma dot_product_resize_left :
-  forall t1 t2, dot_product (resize (length t2) t1) t2 = dot_product t1 t2.
-Proof.
-  intros t1 t2. rewrite <- app_nil_r with (l := t2) at 3. rewrite dot_product_app_right.
-  rewrite dot_product_nil_right; lia.
-Qed.
-
-Lemma dot_product_resize_right :
-  forall t1 t2, dot_product t1 (resize (length t1) t2) = dot_product t1 t2.
-Proof.
-  intros. rewrite dot_product_commutative. rewrite dot_product_resize_left.
-  rewrite dot_product_commutative. auto.
-Qed.
-
-
-Lemma nth_skipn :
-  forall A n m (l : list A) d, nth n (skipn m l) d = nth (m + n) l d.
-Proof.
-  induction m.
-  - intros. simpl. reflexivity.
-  - intros. simpl.
-    destruct l; simpl.
-    + destruct n; reflexivity.
-    + apply IHm.
-Qed.
-
-Lemma div_lt_iff :
-  forall x y z, 0 < y -> x / y < z <-> x < y * z.
-Proof.
-  intros x y z Hy; split; intro H.
-  - apply Z.nle_gt; intro H2. apply Z.div_le_lower_bound in H2; lia.
-  - apply Z.div_lt_upper_bound; auto.
-Qed.
-
-Lemma div_le_iff :
-  forall x y z, 0 < y -> x / y <= z <-> x <= y * z + y - 1.
-Proof.
-  intros x y z Hy. rewrite <- Z.lt_succ_r. rewrite div_lt_iff by lia. nia.
-Qed.
-
-Lemma div_ge_iff :
-  forall x y z, 0 < z -> x <= y / z <-> x * z <= y.
-Proof.
-  intros x y z Hz. rewrite <- !Z.nlt_ge. apply not_iff_compat. rewrite div_lt_iff by lia. nia.
-Qed.
-
-Lemma div_gt_iff :
-  forall x y z, 0 < z -> x < y / z <-> x * z + z - 1 < y.
-Proof.
-  intros x y z Hz. rewrite <- !Z.nle_gt. apply not_iff_compat. rewrite div_le_iff by lia. nia.
-Qed.
+(** * Creating upper and lower bounds for a given variable in a constraint *)
 
 Definition make_lower_bound n c :=
   Div (Sum (Constant ((- nth n (fst c) 0) - 1)) (make_affine_expr n (fst c, -(snd c)))) (-(nth n (fst c) 0)).
@@ -197,6 +148,7 @@ Proof.
     ].
   rewrite div_le_iff by lia. nia.
 Qed.
+
 Definition make_upper_bound n c :=
   Div (Sum (Constant (nth n (fst c) 0)) (make_affine_expr n (mult_vector (-1) (fst c), snd c))) (nth n (fst c) 0).
 Lemma make_upper_bound_correct :
@@ -217,6 +169,8 @@ Proof.
   rewrite div_gt_iff by lia. nia.
 Qed.
 Opaque make_lower_bound make_upper_bound.
+
+(** * Finding the upper and lower bounds for a given variable of a polyhedron *)
 
 Fixpoint find_lower_bound_aux (e : option expr) (n : nat) (p : polyhedron) :=
   match p with
@@ -302,6 +256,21 @@ Proof.
   rewrite find_upper_bound_aux_correct by eauto. simpl. tauto.
 Qed.
 
+Theorem find_bounds_correct :
+  forall n pol env x lb ub, find_lower_bound n pol = Ok lb -> find_upper_bound n pol = Ok ub -> length env = n ->
+                       eval_expr env lb <= x < eval_expr env ub <-> (forall c, In c pol -> nth n (fst c) 0 <> 0 -> satisfies_constraint (rev env ++ x :: nil) c = true).
+Proof.
+  intros n pol env x lb ub Hlb Hub Hlen.
+  rewrite find_lower_bound_correct; eauto.
+  rewrite find_upper_bound_correct; eauto.
+  split.
+  - intros [H1 H2] c Hin Hnotzero. destruct (nth n (fst c) 0 <=? 0) eqn:Hcmp; reflect; [apply H1 | apply H2]; auto; lia.
+  - intros H; split; intros c Hin Hcmp; apply H; auto; lia.
+Qed.
+
+
+(** * Polyhedral projection, using an untrusted oracle and a certificate *)
+
 Parameter untrusted_project : nat -> polyhedron -> (polyhedron * list witness)%type.
 
 Definition project n p :=
@@ -316,31 +285,6 @@ Definition project n p :=
     Err "Constraint removed in projection"
   else
     Ok res.
-
-Theorem nth_error_combine :
-  forall (A B : Type) (n : nat) (l : list A) (l' : list B) x y,
-    nth_error (combine l l') n = Some (x, y) <-> nth_error l n = Some x /\ nth_error l' n = Some y.
-Proof.
-  induction n.
-  - intros l l' x y; destruct l; destruct l'; simpl in *; split; (intros [H1 H2] || (intros H; split)); congruence.
-  - intros l l' x y; destruct l; destruct l'; simpl in *; split; (intros [H1 H2] || (intros H; split)); try congruence.
-    + rewrite IHn in H; destruct H; auto.
-    + rewrite IHn in H; destruct H; auto.
-    + rewrite IHn; auto.
-Qed.
-
-Theorem in_l_combine :
-  forall (A B : Type) (l : list A) (l': list B) x,
-    length l = length l' -> In x l -> (exists y, In (x, y) (combine l l')).
-Proof.
-  intros A B l l' x Hlen Hin. apply In_nth_error in Hin.
-  destruct Hin as [n Hin].
-  destruct (nth_error l' n) as [y|] eqn:Heq.
-  - exists y. apply nth_error_In with (n := n). rewrite nth_error_combine. auto.
-  - rewrite nth_error_None in Heq.
-    assert (n < length l)%nat by (rewrite <- nth_error_Some; congruence).
-    lia.
-Qed.
 
 Ltac destruct_if H Heq :=
   lazymatch goal with
@@ -390,17 +334,7 @@ Proof.
   exists c'. auto.
 Qed.
 
-Theorem find_bounds_correct :
-  forall n pol env x lb ub, find_lower_bound n pol = Ok lb -> find_upper_bound n pol = Ok ub -> length env = n ->
-                       eval_expr env lb <= x < eval_expr env ub <-> (forall c, In c pol -> nth n (fst c) 0 <> 0 -> satisfies_constraint (rev env ++ x :: nil) c = true).
-Proof.
-  intros n pol env x lb ub Hlb Hub Hlen.
-  rewrite find_lower_bound_correct; eauto.
-  rewrite find_upper_bound_correct; eauto.
-  split.
-  - intros [H1 H2] c Hin Hnotzero. destruct (nth n (fst c) 0 <=? 0) eqn:Hcmp; reflect; [apply H1 | apply H2]; auto; lia.
-  - intros H; split; intros c Hin Hcmp; apply H; auto; lia.
-Qed.
+(** * Generating the code *)
 
 Fixpoint generate_loop (d : nat) (n : nat) (pi : Polyhedral_Instruction) : result stmt :=
   match d with
@@ -612,7 +546,7 @@ Qed.
 
 (*
 Import ListNotations.
-Axiom dummy : Instr.instr.
+Axiom dummy : instr.
 Definition test_pi := {|
    pi_instr := dummy ;
    pi_poly := [ ([0; 0; -1; 0], 0); ([0; 0; 0; -1], 0); ([-1; 0; 1; 0], 0); ([0; -1; 0; 1], 0) ] ;

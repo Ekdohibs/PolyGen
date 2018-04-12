@@ -7,6 +7,8 @@ Open Scope list_scope.
 
 Require Import Instr.
 
+(** * The semantics of the Loop language *)
+
 Inductive expr :=
 | Constant : Z -> expr
 | Sum : expr -> expr -> expr

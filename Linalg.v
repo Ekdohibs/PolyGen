@@ -855,7 +855,7 @@ Proof.
 Qed.
 
 
-(** Alternative formulation of previous results that used [++] on both sides *)
+(** * Alternative formulation of previous results that used [++] on both sides *)
 
 Lemma dot_product_app_left :
   forall l1 l2 l3, dot_product (l1 ++ l2) l3 = dot_product l1 (resize (length l1) l3) + dot_product l2 (skipn (length l1) l3).
@@ -886,3 +886,20 @@ Proof.
   intros. rewrite is_eq_commutative. rewrite is_eq_app_left.
   f_equal; apply is_eq_commutative.
 Qed.
+
+(** * More results on dot product *)
+
+Lemma dot_product_resize_left :
+  forall t1 t2, dot_product (resize (length t2) t1) t2 = dot_product t1 t2.
+Proof.
+  intros t1 t2. rewrite <- app_nil_r with (l := t2) at 3. rewrite dot_product_app_right.
+  rewrite dot_product_nil_right; lia.
+Qed.
+
+Lemma dot_product_resize_right :
+  forall t1 t2, dot_product t1 (resize (length t1) t2) = dot_product t1 t2.
+Proof.
+  intros. rewrite dot_product_commutative. rewrite dot_product_resize_left.
+  rewrite dot_product_commutative. auto.
+Qed.
+
