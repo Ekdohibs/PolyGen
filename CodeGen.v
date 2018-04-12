@@ -383,13 +383,11 @@ Proof.
   destruct_if Hok Hwits; reflect; [congruence|].
   destruct_if Hok Hpreserve; reflect; [congruence|].
   injection Hok as Hok; rewrite Hok in *.
-  rewrite forallb_forall in Hpreserve. specialize (Hpreserve c Hin).
-  reflect.
+  reflect_binders.
+  specialize (Hpreserve c Hin).
   rewrite <- is_eq_veq in Heq; rewrite Heq in Hpreserve.
-  destruct Hpreserve as [Hpreserve | Hpreserve]; [congruence|].
-  rewrite existsb_exists in Hpreserve.
-  destruct Hpreserve as [c' [Hin2 Heqc']].
-  exists c'. reflect. auto.
+  destruct Hpreserve as [Hpreserve | [c' [Hin2 Heqc']]]; [congruence|].
+  exists c'. auto.
 Qed.
 
 Theorem find_bounds_correct :
