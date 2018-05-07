@@ -271,68 +271,283 @@ Qed.
 
 (** * Polyhedral projection, using an untrusted oracle and a certificate *)
 
-Parameter untrusted_project : nat -> polyhedron -> (polyhedron * list witness)%type.
+Module Type PolyProject.
+  Parameter project : nat -> polyhedron -> result polyhedron.
 
-Definition project n p :=
-  let (res, wits) := untrusted_project n p in
-  if negb (length res =? length wits)%nat then
-    Err "Incorrect number of witnesses"
-  else if negb (forallb (fun c => is_eq (fst c) (resize n (fst c))) res) then
-    Err "Constraint too long"
-  else if negb (forallb (fun z => is_redundant (snd z) p (fst z)) (combine res wits)) then
-    Err "Witness checking failed"
-  else if negb (forallb (fun c => negb (is_eq (fst c) (resize n (fst c))) || existsb (fun c' => is_eq (fst c) (fst c') && (snd c =? snd c')) res) p) then
-    Err "Constraint removed in projection"
-  else
-    Ok res.
+  Parameter project_inclusion :
+    forall n p pol proj, project n pol = Ok proj -> in_poly p pol = true -> in_poly (resize n p) proj = true.
+
+  Parameter project_invariant : nat -> polyhedron -> list Z -> Prop.
+
+  Parameter project_invariant_inclusion :
+    forall n pol p, in_poly p pol = true -> project_invariant n pol (resize n p).
+
+  Parameter project_id :
+    forall n pol p, (forall c, In c pol -> fst c =v= resize n (fst c)) -> project_invariant n pol p -> in_poly p pol = true.
+
+  Parameter project_next_r_inclusion :
+    forall n pol proj p, project (S n) pol = Ok proj -> project_invariant n pol p ->
+                    (forall c, In c proj -> nth n (fst c) 0 <> 0 -> satisfies_constraint p c = true) -> project_invariant (S n) pol p.
+
+  Parameter project_invariant_resize :
+    forall n pol p, project_invariant n pol p <-> project_invariant n pol (resize n p).
+
+  Parameter project_invariant_export : nat -> polyhedron -> result polyhedron.
+
+  Parameter project_invariant_export_correct :
+    forall n p pol res, project_invariant_export n pol = Ok res -> in_poly p res = true <-> project_invariant n pol p.
+
+  Parameter project_constraint_size :
+    forall n pol proj c, project n pol = Ok proj -> In c proj -> fst c =v= resize n (fst c).
+
+End PolyProject.
 
 Ltac destruct_if H Heq :=
   lazymatch goal with
     | [ H : context[if ?X then _ else _] |- _ ] => destruct X eqn:Heq
   end.
 
-Theorem project_inclusion :
-  forall n p pol proj, project n pol = Ok proj -> in_poly p pol = true -> in_poly (resize n p) proj = true.
+Lemma resize_succ :
+  forall n l, resize (S n) l = resize n l ++ nth n l 0 :: nil.
 Proof.
-  intros n p pol proj Hok Hin.
-  unfold project in Hok.
-  destruct (untrusted_project n pol) as [res wits].
-  destruct_if Hok Hlen; reflect; [congruence|].
-  destruct_if Hok Hresize; reflect; [congruence|].
-  destruct_if Hok Hwits; reflect; [congruence|].
-  destruct_if Hok Hpreserve; reflect; [congruence|].
-  injection Hok as Hok; rewrite Hok in *.
-  assert (Hinproj : in_poly p proj = true).
-  - unfold in_poly. rewrite forallb_forall. intros c Hc.
-    apply in_l_combine with (l' := wits) in Hc; [|auto].
-    destruct Hc as [wit Hwit].
-    eapply is_redundant_correct; [|apply Hin].
-    rewrite forallb_forall in Hwits.
-    apply (Hwits (c, wit)); auto.
-  - unfold in_poly in *. rewrite forallb_forall in *. intros c Hc.
-    rewrite <- (Hinproj c) by auto.
-    unfold satisfies_constraint. f_equal. specialize (Hresize c Hc). reflect.
-    rewrite Hresize.
-    rewrite <- dot_product_resize_left with (t1 := p). rewrite resize_length. reflexivity.
+  induction n.
+  - intros; destruct l; simpl; auto.
+  - intros; destruct l; simpl in *; f_equal.
+    + rewrite (IHn nil). destruct n; auto.
+    + apply IHn.
 Qed.
 
-Theorem project_reverse_inclusion :
-  forall n pol proj c, project n pol = Ok proj -> In c pol -> fst c =v= resize n (fst c) -> (exists c', c =c= c' /\ In c' proj).
+Theorem nth_eq :
+  forall n l1 l2, l1 =v= l2 -> nth n l1 0 = nth n l2 0.
 Proof.
-  intros n pol proj c Hok Hin Heq.
-  unfold project in Hok.
-  destruct (untrusted_project n pol) as [res wits].
-  destruct_if Hok Hlen; reflect; [congruence|].
-  destruct_if Hok Hresize; reflect; [congruence|].
-  destruct_if Hok Hwits; reflect; [congruence|].
-  destruct_if Hok Hpreserve; reflect; [congruence|].
-  injection Hok as Hok; rewrite Hok in *.
-  reflect_binders.
-  specialize (Hpreserve c Hin).
-  rewrite <- is_eq_veq in Heq; rewrite Heq in Hpreserve.
-  destruct Hpreserve as [Hpreserve | [c' [Hin2 Heqc']]]; [congruence|].
-  exists c'. auto.
+  induction n.
+  - intros l1 l2 H. rewrite <- is_eq_veq in H.
+    destruct l1; destruct l2; simpl in *; reflect; auto; destruct H; auto.
+  - intros l1 l2 H. rewrite <- is_eq_veq in H.
+    destruct l1; destruct l2; simpl in *; reflect; auto; destruct H; auto.
+    + specialize (IHn nil l2). rewrite <- is_eq_veq in IHn. rewrite <- IHn by (destruct l2; auto). destruct n; auto.
+    + specialize (IHn l1 nil). rewrite <- is_eq_veq in IHn. rewrite IHn by (destruct l1; auto). destruct n; auto.
 Qed.
+
+Module PolyProjectSimple <: PolyProject.
+
+  Parameter untrusted_project : nat -> polyhedron -> (polyhedron * list witness)%type.
+
+  Definition project n p :=
+    let (res, wits) := untrusted_project n p in
+    if negb (length res =? length wits)%nat then
+      Err "Incorrect number of witnesses"
+    else if negb (forallb (fun c => is_eq (fst c) (resize n (fst c))) res) then
+      Err "Constraint too long"
+    else if negb (forallb (fun z => is_redundant (snd z) p (fst z)) (combine res wits)) then
+      Err "Witness checking failed"
+    else if negb (forallb (fun c => negb (is_eq (fst c) (resize n (fst c))) || existsb (fun c' => is_eq (fst c) (fst c') && (snd c =? snd c')) res) p) then
+      Err "Constraint removed in projection"
+    else
+      Ok res.
+
+  Theorem project_inclusion :
+    forall n p pol proj, project n pol = Ok proj -> in_poly p pol = true -> in_poly (resize n p) proj = true.
+  Proof.
+    intros n p pol proj Hok Hin.
+    unfold project in Hok.
+    destruct (untrusted_project n pol) as [res wits].
+    destruct_if Hok Hlen; reflect; [congruence|].
+    destruct_if Hok Hresize; reflect; [congruence|].
+    destruct_if Hok Hwits; reflect; [congruence|].
+    destruct_if Hok Hpreserve; reflect; [congruence|].
+    injection Hok as Hok; rewrite Hok in *.
+    assert (Hinproj : in_poly p proj = true).
+    - unfold in_poly. rewrite forallb_forall. intros c Hc.
+      apply in_l_combine with (l' := wits) in Hc; [|auto].
+      destruct Hc as [wit Hwit].
+      eapply is_redundant_correct; [|apply Hin].
+      rewrite forallb_forall in Hwits.
+      apply (Hwits (c, wit)); auto.
+    - unfold in_poly in *. rewrite forallb_forall in *. intros c Hc.
+      rewrite <- (Hinproj c) by auto.
+      unfold satisfies_constraint. f_equal. specialize (Hresize c Hc). reflect.
+      rewrite Hresize.
+      rewrite <- dot_product_resize_left with (t1 := p). rewrite resize_length. reflexivity.
+  Qed.
+
+  Definition project_invariant n pol p :=
+    forall c, In c pol -> fst c =v= resize n (fst c) -> satisfies_constraint p c = true.
+
+  Theorem project_reverse_inclusion :
+    forall n pol proj c, project n pol = Ok proj -> In c pol -> fst c =v= resize n (fst c) -> (exists c', c =c= c' /\ In c' proj).
+  Proof.
+    intros n pol proj c Hok Hin Heq.
+    unfold project in Hok.
+    destruct (untrusted_project n pol) as [res wits].
+    destruct_if Hok Hlen; reflect; [congruence|].
+    destruct_if Hok Hresize; reflect; [congruence|].
+    destruct_if Hok Hwits; reflect; [congruence|].
+    destruct_if Hok Hpreserve; reflect; [congruence|].
+    injection Hok as Hok; rewrite Hok in *.
+    reflect_binders.
+    specialize (Hpreserve c Hin).
+    rewrite <- is_eq_veq in Heq; rewrite Heq in Hpreserve.
+    destruct Hpreserve as [Hpreserve | [c' [Hin2 Heqc']]]; [congruence|].
+    exists c'. auto.
+  Qed.
+
+  Theorem project_invariant_inclusion :
+    forall n pol p, in_poly p pol = true -> project_invariant n pol (resize n p).
+  Proof.
+    intros n pol p Hin. unfold in_poly, project_invariant in *.
+    rewrite forallb_forall in Hin; intros c Hinc Hlenc.
+    specialize (Hin c Hinc).
+    unfold satisfies_constraint in *.
+    rewrite Hlenc in Hin. rewrite <- dot_product_resize_left in Hin.
+    rewrite resize_length in Hin. rewrite Hlenc. auto.
+  Qed.
+
+  Theorem project_id :
+    forall n pol p, (forall c, In c pol -> fst c =v= resize n (fst c)) -> project_invariant n pol p -> in_poly p pol = true.
+  Proof.
+    intros n pol p Hsize Hinv. unfold in_poly; rewrite forallb_forall. intros c Hc.
+    apply Hinv; auto.
+  Qed.
+
+  Theorem project_next_r_inclusion :
+    forall n pol proj p, project (S n) pol = Ok proj -> project_invariant n pol p ->
+                    (forall c, In c proj -> nth n (fst c) 0 <> 0 -> satisfies_constraint p c = true) -> project_invariant (S n) pol p.
+  Proof.
+    intros n pol proj p Hproj Hinv Hsat c Hcin Hclen.
+    destruct (nth n (fst c) 0 =? 0) eqn:Hzero; reflect.
+    - rewrite resize_succ in Hclen. rewrite Hzero in Hclen.
+      setoid_replace (0 :: nil) with (@nil Z) in Hclen by (rewrite <- is_eq_veq; auto).
+      rewrite app_nil_r in Hclen.
+      apply Hinv; auto.
+    - destruct (project_reverse_inclusion (S n) pol proj c Hproj Hcin Hclen) as [c' [Heqc' Hc'in]].
+      rewrite Heqc'. apply Hsat; auto. erewrite nth_eq; eauto. rewrite Heqc'; reflexivity.
+  Qed.
+
+  Theorem project_invariant_resize :
+    forall n pol p, project_invariant n pol p <-> project_invariant n pol (resize n p).
+  Proof.
+    intros n pol p.
+    unfold project_invariant; apply forall_ext.
+    intros c. apply forall_ext. intros Hcin. apply forall_ext. intros Hclen.
+    apply eq_iff_eq_true. unfold satisfies_constraint. f_equal.
+    rewrite Hclen. rewrite <- dot_product_resize_left. rewrite resize_length; auto.
+  Qed.
+
+  Definition project_invariant_export n (pol : polyhedron) :=
+    Ok (filter (fun c => is_eq (fst c) (resize n (fst c))) pol).
+
+  Theorem project_invariant_export_correct :
+    forall n p pol res, project_invariant_export n pol = Ok res -> in_poly p res = true <-> project_invariant n pol p.
+  Proof.
+    intros n p pol res Heq. unfold project_invariant_export in Heq; injection Heq as Heq.
+    rewrite <- Heq in *. unfold project_invariant. unfold in_poly.
+    rewrite forallb_forall. under_forall ((list Z * Z)%type) ltac:(fun x => rewrite filter_In; reflect).
+    firstorder.
+  Qed.
+
+  Theorem project_constraint_size :
+    forall n pol proj c, project n pol = Ok proj -> In c proj -> fst c =v= resize n (fst c).
+  Proof.
+    intros n pol proj c Hproj Hin.
+    unfold project in Hproj.
+    destruct (untrusted_project n pol) as [res wits].
+    destruct_if Hproj Hlen; [congruence|].
+    destruct_if Hproj Hresize; [congruence|].
+    destruct_if Hproj Hwits; [congruence|].
+    destruct_if Hproj Hpreserve; [congruence|].
+    injection Hproj as Hproj; rewrite Hproj in *.
+    reflect. rewrite forallb_forall in Hresize. specialize (Hresize c); reflect; eauto.
+  Qed.
+
+End PolyProjectSimple.
+
+(*
+Module PolyProjectVPL <: PolyProject.
+
+  Require Import VPL.
+
+  Definition project n p := Ok p.
+
+  Theorem project_inclusion :
+    forall n p pol proj, project n pol = Ok proj -> in_poly p pol = true -> in_poly (resize n p) proj = true.
+  Proof.
+  Qed.
+
+  Definition project_invariant n pol p :=
+    forall c, In c pol -> fst c =v= resize n (fst c) -> satisfies_constraint p c = true.
+
+  Theorem project_reverse_inclusion :
+    forall n pol proj c, project n pol = Ok proj -> In c pol -> fst c =v= resize n (fst c) -> (exists c', c =c= c' /\ In c' proj).
+  Proof.
+  Qed.
+
+  Theorem project_invariant_inclusion :
+    forall n pol p, in_poly p pol = true -> project_invariant n pol (resize n p).
+  Proof.
+  Qed.
+
+  Theorem project_id :
+    forall n pol p, (forall c, In c pol -> fst c =v= resize n (fst c)) -> project_invariant n pol p -> in_poly p pol = true.
+  Proof.
+  Qed.
+
+  Theorem project_next_r_inclusion :
+    forall n pol proj p, project (S n) pol = Ok proj -> project_invariant n pol p ->
+                    (forall c, In c proj -> nth n (fst c) 0 <> 0 -> satisfies_constraint p c = true) -> project_invariant (S n) pol p.
+  Proof.
+  Qed.
+
+  Theorem project_invariant_resize :
+    forall n pol p, project_invariant n pol p <-> project_invariant n pol (resize n p).
+  Proof.
+  Qed.
+
+  Definition project_invariant_export n (pol : polyhedron) :=
+    Ok (filter (fun c => is_eq (fst c) (resize n (fst c))) pol).
+
+  Theorem project_invariant_export_correct :
+    forall n p pol res, project_invariant_export n pol = Ok res -> in_poly p res = true <-> project_invariant n pol p.
+  Proof.
+  Qed.
+
+  Theorem project_constraint_size :
+    forall n pol proj c, project n pol = Ok proj -> In c proj -> fst c =v= resize n (fst c).
+  Proof.
+  Qed.
+
+End PolyProjectVPL.
+ *)
+
+Import PolyProjectSimple.
+
+(*
+Theorem project_id :
+  forall n pol proj p, project n pol = Ok proj -> (forall c, In c pol -> fst c =v= resize n (fst c)) -> in_poly p proj = true -> in_poly p pol = true.
+Proof.
+  intros n pol proj p Hproj Hplen Hin.
+  unfold project in Hproj.
+  destruct (untrusted_project n pol) as [res wits].
+  destruct_if Hproj Hlen; [congruence|].
+  destruct_if Hproj Hresize; [congruence|].
+  destruct_if Hproj Hwits; [congruence|].
+  destruct_if Hproj Hpreserve; [congruence|].
+  injection Hproj as Hproj; rewrite Hproj in *.
+  reflect. unfold in_poly in *. reflect_binders.
+  intros c Hc; specialize (Hpreserve c Hc). specialize (Hplen c Hc).
+  rewrite <- Hplen in Hpreserve. rewrite is_eq_reflexive in Hpreserve.
+  destruct Hpreserve as [Hpreserve | [x  [H1 [H2 H3]]]]; [congruence|].
+  unfold satisfies_constraint. rewrite H2; rewrite H3. apply Hin; auto.
+Qed.
+
+Theorem project_next_r_inclusion :
+  forall n pol proj1 proj2 p, project n pol = Ok proj1 -> project (S n) pol = Ok proj2 -> in_poly p proj1 = true ->
+                         (forall c, In c proj2 -> nth n (fst c) 0 <> 0 -> satisfies_constraint p c = true) -> in_poly p proj2 = true.
+Proof.
+  intros n pol proj1 proj2 p Hproj1 Hproj2 Hinp1 Hsat.
+Admitted.
+*)
+
 
 (** * Generating the code *)
 
@@ -391,28 +606,6 @@ Proof.
       reflect; destruct H1 as [H1 H4]. rewrite resize_resize in H1 by lia. assumption.
 Qed.
 
-Lemma resize_succ :
-  forall n l, resize (S n) l = resize n l ++ nth n l 0 :: nil.
-Proof.
-  induction n.
-  - intros; destruct l; simpl; auto.
-  - intros; destruct l; simpl in *; f_equal.
-    + rewrite (IHn nil). destruct n; auto.
-    + apply IHn.
-Qed.
-
-Theorem nth_eq :
-  forall n l1 l2, l1 =v= l2 -> nth n l1 0 = nth n l2 0.
-Proof.
-  induction n.
-  - intros l1 l2 H. rewrite <- is_eq_veq in H.
-    destruct l1; destruct l2; simpl in *; reflect; auto; destruct H; auto.
-  - intros l1 l2 H. rewrite <- is_eq_veq in H.
-    destruct l1; destruct l2; simpl in *; reflect; auto; destruct H; auto.
-    + specialize (IHn nil l2). rewrite <- is_eq_veq in IHn. rewrite <- IHn by (destruct l2; auto). destruct n; auto.
-    + specialize (IHn l1 nil). rewrite <- is_eq_veq in IHn. rewrite IHn by (destruct l1; auto). destruct n; auto.
-Qed.
-
 Lemma generate_loop_single_point :
   forall n pi st env mem1 mem2,
     generate_loop 0%nat n pi = Ok st ->
@@ -444,6 +637,7 @@ Proof.
     destruct H2; congruence.
 Qed.
 
+(*
 Lemma satisfies_extend :
   forall n pol proj lb ub env x,
     length env = n ->
@@ -468,6 +662,7 @@ Proof.
     apply Hx; auto. erewrite nth_eq in Hzero; [exact Hzero|].
     rewrite Heqc'; reflexivity.
 Qed.
+ *)
 
 Lemma env_scan_extend :
   forall d n pi proj lb ub env m p,
@@ -506,15 +701,15 @@ Theorem generate_loop_preserves_sem :
     loop_semantics st env mem1 mem2 ->
     length env = (n - d)%nat ->
     (forall c, In c pi.(pi_poly) -> fst c =v= resize n (fst c)) ->
-    (forall c, In c pi.(pi_poly) -> fst c =v= resize (n - d)%nat (fst c) -> satisfies_constraint (rev env) c = true) ->
+    project_invariant (n - d)%nat pi.(pi_poly) (rev env) ->
     env_poly_lex_semantics (rev env) n (pi :: nil) mem1 mem2.
 Proof.
   induction d.
-  - intros n pi st env mem1 mem2 Hnd Hgen Hsem Hlen Hpilen Henvsat.
+  - intros n pi st env mem1 mem2 Hnd Hgen Hsem Hlen Hpilen Hinv.
     eapply generate_loop_single_point; eauto; try lia.
-    unfold in_poly. rewrite forallb_forall. intros c Hin.
-    apply Henvsat; auto. rewrite Nat.sub_0_r. auto.
-  - intros n pi st env mem1 mem2 Hnd Hgen Hsem Hlen Hpilen Henvsat. simpl in *.
+    eapply project_id; eauto.
+    rewrite Nat.sub_0_r in Hinv. auto.
+  - intros n pi st env mem1 mem2 Hnd Hgen Hsem Hlen Hpilen Hinv. simpl in *.
     bind_ok_destruct Hgen proj Hproj. bind_ok_destruct Hgen lb Hlb. bind_ok_destruct Hgen ub Hub. bind_ok_destruct Hgen inner Hinner.
     injection Hgen as Hgen. rewrite <- Hgen in Hsem.
     inversion_clear Hsem.
@@ -524,7 +719,10 @@ Proof.
       * eapply iter_semantics_map; [|apply H]. simpl.
         intros x mem3 mem4 Hbounds Hloop. eapply IHd with (env := x :: env); simpl; eauto; try lia.
         replace (n - d)%nat with (S (n - S d))%nat in * by lia.
-        eapply satisfies_extend; eauto.
+        eapply project_next_r_inclusion; [exact Hproj| |].
+        -- rewrite project_invariant_resize. rewrite resize_app by (rewrite rev_length; auto).
+           apply Hinv.
+        -- rewrite <- find_bounds_correct; eauto.
       * intros x. apply env_scan_proper.
       * intros x1 x2 m p H1 H2. apply env_scan_begin in H1. apply env_scan_begin in H2.
         assert (Heq : resize (length (rev (x1 :: env))) p = resize (length (rev (x2 :: env))) p).
@@ -543,6 +741,117 @@ Proof.
     + simpl. intros m p. erewrite env_scan_extend; eauto; try lia.
       rewrite <- Hproj; f_equal; lia.
 Qed.
+
+Fixpoint list_max l :=
+  match l with
+  | nil => 0%nat
+  | x :: l => Nat.max x (list_max l)
+  end.
+
+Theorem list_max_le :
+  forall l n, (list_max l <= n -> (forall x, In x l -> x <= n))%nat.
+Proof.
+  induction l; simpl in *.
+  - intros; exfalso; auto.
+  - intros n H x [Ha | Hl].
+    + lia.
+    + apply IHl; auto; lia.
+Qed.
+
+Fixpoint and_all l :=
+  match l with
+  | nil => EQ (Constant 0) (Constant 0)
+  | x :: l => And x (and_all l)
+  end.
+
+Theorem and_all_correct :
+  forall l env, eval_test env (and_all l) = forallb (eval_test env) l.
+Proof.
+  induction l; simpl in *; auto.
+(*  intros; rewrite IHl; auto. *)
+Qed.
+
+Definition make_affine_test n c := LE (make_linear_expr n (fst c)) (Constant (snd c)).
+
+Lemma make_affine_test_correct :
+  forall env n c, length env = n -> eval_test env (make_affine_test n c) = satisfies_constraint (rev env) c.
+Proof.
+  intros. simpl in *. rewrite make_linear_expr_correct; auto.
+  rewrite dot_product_commutative. reflexivity.
+Qed.
+
+Definition make_poly_test n poly :=
+  and_all (map (make_affine_test n) poly).
+
+Lemma make_poly_test_correct :
+  forall n poly env, length env = n ->
+                eval_test env (make_poly_test n poly) = in_poly (rev env) poly.
+Proof.
+  intros n poly env Hlen.
+  unfold make_poly_test. rewrite and_all_correct. unfold in_poly.
+  rewrite forallb_map. apply forallb_ext. intros c. apply make_affine_test_correct. auto.
+Qed.
+
+(*
+Definition make_smalldims_test d n poly :=
+  and_all (map (make_affine_test n) (filter (fun c => is_eq (fst c) (resize d (fst c))) poly)).
+
+Lemma make_smalldims_test_correct :
+  forall d n poly env, length env = n ->
+                  eval_test env (make_smalldims_test d n poly) = true <->
+                  (forall c, In c poly -> fst c =v= resize d (fst c) -> satisfies_constraint (rev env) c = true).
+Proof.
+  intros d n poly env Hlen.
+  unfold make_smalldims_test. rewrite and_all_correct. rewrite forallb_map. rewrite forallb_forall.
+  apply forall_ext. intros c. rewrite make_affine_test_correct by auto.
+  rewrite filter_In. tauto.
+Qed.
+ *)
+
+Definition generate d n pi :=
+  do st <- generate_loop d n pi ;
+  do ctx <- project_invariant_export (n - d)%nat pi.(pi_poly) ;
+  Ok (Guard (make_poly_test (n - d)%nat ctx) st).
+
+Theorem generate_preserves_sem :
+  forall d n pi st env mem1 mem2,
+    (d <= n)%nat ->
+    generate d n pi = Ok st ->
+    loop_semantics st env mem1 mem2 ->
+    length env = (n - d)%nat ->
+    (forall c, In c pi.(pi_poly) -> fst c =v= resize n (fst c)) ->
+    env_poly_lex_semantics (rev env) n (pi :: nil) mem1 mem2.
+Proof.
+  intros d n pi st env mem1 mem2 Hd Hgen Hloop Henv Hsize.
+  bind_ok_destruct Hgen st1 H. bind_ok_destruct Hgen ctx Hctx. injection Hgen as Hgen.
+  rewrite <- Hgen in *. inversion_clear Hloop.
+  - eapply generate_loop_preserves_sem; eauto.
+    rewrite <- project_invariant_export_correct by eauto.
+    erewrite <- make_poly_test_correct; [|apply Henv]. auto.
+  - apply PolyLexDone. intros n0 p. unfold env_scan.
+    destruct n0; simpl in *; [|destruct n0]; auto. reflect.
+    rewrite rev_length; rewrite Henv.
+    rewrite make_poly_test_correct in H0; auto.
+    destruct (is_eq (rev env) (resize (n - d)%nat p)) eqn:Hpenv; auto.
+    destruct (in_poly p pi.(pi_poly)) eqn:Hpin; auto. exfalso.
+    eapply project_invariant_inclusion in Hpin.
+    rewrite <- project_invariant_export_correct in Hpin; [|exact Hctx].
+    reflect. rewrite <- Hpenv in Hpin. congruence.
+Qed.
+
+(*
+Definition generate es pi :=
+  let n := list_max (map (fun c => length (fst c)) pi.(pi_poly)) in
+  generate_loop (n - es) n pi.
+*)
+(*
+Theorem generate_preserves_sem :
+  forall pi es st env mem1 mem2,
+    es = length env ->
+    generate es pi = Ok st ->
+    (forall c, In c pi.(pi_poly) -> fst c =v= resize es (fst c) -> satisfies_constraint (rev env) c = true) ->
+    env_poly_lex_semantics 
+ *)
 
 (*
 Import ListNotations.
