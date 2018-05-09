@@ -307,28 +307,6 @@ Ltac destruct_if H Heq :=
     | [ H : context[if ?X then _ else _] |- _ ] => destruct X eqn:Heq
   end.
 
-Lemma resize_succ :
-  forall n l, resize (S n) l = resize n l ++ nth n l 0 :: nil.
-Proof.
-  induction n.
-  - intros; destruct l; simpl; auto.
-  - intros; destruct l; simpl in *; f_equal.
-    + rewrite (IHn nil). destruct n; auto.
-    + apply IHn.
-Qed.
-
-Theorem nth_eq :
-  forall n l1 l2, l1 =v= l2 -> nth n l1 0 = nth n l2 0.
-Proof.
-  induction n.
-  - intros l1 l2 H. rewrite <- is_eq_veq in H.
-    destruct l1; destruct l2; simpl in *; reflect; auto; destruct H; auto.
-  - intros l1 l2 H. rewrite <- is_eq_veq in H.
-    destruct l1; destruct l2; simpl in *; reflect; auto; destruct H; auto.
-    + specialize (IHn nil l2). rewrite <- is_eq_veq in IHn. rewrite <- IHn by (destruct l2; auto). destruct n; auto.
-    + specialize (IHn l1 nil). rewrite <- is_eq_veq in IHn. rewrite IHn by (destruct l1; auto). destruct n; auto.
-Qed.
-
 Module PolyProjectSimple <: PolyProject.
 
   Parameter untrusted_project : nat -> polyhedron -> (polyhedron * list witness)%type.
@@ -462,10 +440,14 @@ Module PolyProjectSimple <: PolyProject.
 
 End PolyProjectSimple.
 
-(*
-Module PolyProjectVPL <: PolyProject.
+Require Import Vpl.DomainInterfaces.
+Require Import Vpl.ConsSet.
+Require Import Vpl.PedraQ.
+Require Import VplInterface.
 
-  Require Import VPL.
+Module PolyProjectVPL (Dom : HasAssume QNum Cstr BasicD) <: PolyProject.
+
+  Axiom extractImp : forall A, imp A -> A.
 
   Definition project n p := Ok p.
 
@@ -517,7 +499,6 @@ Module PolyProjectVPL <: PolyProject.
   Qed.
 
 End PolyProjectVPL.
- *)
 
 Import PolyProjectSimple.
 
