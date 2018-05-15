@@ -587,3 +587,187 @@ Proof.
   intros l v.
   rewrite <- vector_to_LinQ_correct. rewrite <- LinQ_vector_LinQ. rewrite LinQ.Mul_correct. reflexivity.
 Qed.
+
+Lemma vector_nth_null :
+  forall v, (forall n, nth n v 0 = 0) -> is_null v = true.
+Proof.
+  induction v.
+  - intros; simpl; auto.
+  - intros H; simpl; reflect; split.
+    + exact (H 0%nat).
+    + apply IHv; intros n; exact (H (S n)).
+Qed.
+
+Lemma vector_nth_eq :
+  forall v1 v2, (forall n, nth n v1 0 = nth n v2 0) -> is_eq v1 v2 = true.
+Proof.
+  induction v1.
+  - intros v2 H; simpl; destruct v2; try reflexivity; apply vector_nth_null.
+    intros n; rewrite <- H; auto. destruct n; auto.
+  - intros v2 H; destruct v2; simpl; rewrite andb_true_iff.
+    + split; [reflect; exact (H 0%nat)|apply vector_nth_null; intros n; exact (H (S n))].
+    + split; [reflect; exact (H 0%nat)|apply IHv1; intros n; exact (H (S n))].
+Qed.
+
+Lemma vector_nth_veq :
+  forall v1 v2, (forall n, nth n v1 0 = nth n v2 0) -> v1 =v= v2.
+Proof.
+  intros v1 v2 H.
+  rewrite <- is_eq_veq. apply vector_nth_eq; auto.
+Qed.
+
+Lemma vector_LinQ_vector :
+  forall l, mult_vector (fst (LinQ_to_vector (vector_to_LinQ l))) l =v= snd (LinQ_to_vector (vector_to_LinQ l)).
+Proof.
+  intros l. apply vector_nth_veq.
+  intros n. unfold mult_vector.
+  replace 0 with (fst (LinQ_to_vector (vector_to_LinQ l)) * 0) at 1 by lia. rewrite map_nth.
+  rewrite ZtoQ.EqCommutes. rewrite ZtoQ.MulCommutes.
+  rewrite <- LinQ_vector_eq.
+  f_equal.
+  rewrite vector_LinQ_eq. reflexivity.
+Qed.
+
+Definition satisfies_extended cmp v c :=
+  match cmp with
+  | EqT => dot_product v (fst c) =? (snd c)
+  | LeT => dot_product v (fst c) <=? (snd c)
+  | LtT => dot_product v (fst c) <? (snd c)
+  end.
+
+Definition econstraint_to_constraints cmp c :=
+  match cmp with
+  | LeT => c :: nil
+  | LtT => (fst c, snd c - 1) :: nil
+  | EqT => c :: (mult_vector (-1) (fst c), -(snd c)) :: nil
+  end.
+
+Definition econstraint_to_constraints_correct :
+  forall cmp c v, satisfies_extended cmp v c = forallb (satisfies_constraint v) (econstraint_to_constraints cmp c).
+Proof.
+  intros cmp c v. destruct cmp.
+  - simpl. unfold satisfies_constraint. simpl. rewrite dot_product_mult_right.
+    rewrite eq_iff_eq_true. reflect. intuition; lia.
+  - simpl. unfold satisfies_constraint. rewrite andb_true_r. reflexivity.
+  - simpl. unfold satisfies_constraint. simpl. rewrite andb_true_r, eq_iff_eq_true.
+    reflect. lia.
+Qed.
+
+(* Search ZtoQ.ceil. *)
+Search ZtoQ.ofZ.
+Definition get_econstraint cmp lin (q : QNum.t) :=
+  match cmp with
+  | EqT => if (q.(this).(Qden) =? 1)%positive then (EqT, (lin, q.(this).(Qnum))) else (LeT, (@nil Z, -1))
+  | LeT => (LeT, (lin, ZtoQ.floor q))
+  | LtT => (LtT, (lin, ZtoQ.ceil q))
+  end.
+
+Lemma floor_le_exact :
+  forall q x, QNum.Le (ZtoQ.ofZ x) q <-> x <= ZtoQ.floor q.
+Proof.
+  intros q x. split; intros H.
+  - apply ZtoQ.FloorLeZ in H. rewrite ZtoQ.FloorZ in H. auto.
+  - rewrite QNum.LeNotLt. intros H1. apply ZtoQ.FloorQLt in H1. rewrite <- ZtoQ.LtCommutes in H1.
+    rewrite ZNum.LtNotLe in H1. apply H1. apply H.
+Qed.
+
+Lemma ceil_lt_exact :
+  forall q x, QNum.Lt (ZtoQ.ofZ x) q <-> x < ZtoQ.ceil q.
+Proof.
+  intros q x. split; intros H.
+  - apply ZtoQ.CeilQLt in H. rewrite <- ZtoQ.LtCommutes in H. apply H.
+  - rewrite QNum.LtNotLe. intros H1. apply ZtoQ.CeilLeZ in H1. rewrite ZtoQ.CeilZ in H1.
+    rewrite ZNum.LeNotLt in H1. apply H1. apply H.
+Qed.
+
+Theorem get_econstraint_correct :
+  forall cmp lin q v, QNum.cmpDenote (cmpT2G cmp) (ZtoQ.ofZ (dot_product v lin)) q <->
+                 satisfies_extended (fst (get_econstraint cmp lin q)) v (snd (get_econstraint cmp lin q)) = true.
+Proof.
+  intros cmp lin q v. destruct cmp.
+  - unfold get_econstraint; destruct (q.(this).(Qden) =? 1)%positive eqn:Hqden; [rewrite Pos.eqb_eq in Hqden|rewrite Pos.eqb_neq in Hqden]; simpl.
+    + rewrite ZtoQ.isInZ_test with (q := q) at 1 by auto.
+      reflect. rewrite ZtoQ.EqCommutes. reflexivity.
+    + rewrite dot_product_nil_right. split; intros H; [|cbv in H; congruence].
+      exfalso. rewrite <- H in Hqden. simpl in Hqden. congruence.
+  - simpl. reflect. apply floor_le_exact.
+  - simpl. reflect. apply ceil_lt_exact.
+Qed.
+
+Definition Cstr_to_econstraint c :=
+  let w := LinQ_to_vector (Cstr.coefs c) in
+  get_econstraint (Cstr.typ c) (snd w) (QNum.mul (ZtoQ.ofZ (fst w)) (Cstr.cst c)).
+
+Lemma Qnum_mul_eq :
+  forall k x y, ~ (k = QNum.z) -> QNum.mul k x = QNum.mul k y -> x = y.
+Proof.
+  intros k x y H1 H2.
+  rewrite <- Qcmult_div_r with (x := x) (y := k) by (exact H1).
+  rewrite <- Qcmult_div_r with (x := y) (y := k) by (exact H1).
+  unfold Qcdiv. rewrite !Qcmult_assoc. f_equal. exact H2.
+Qed.
+
+Lemma Qnum_LtAntiRefl :
+  forall x, ~(QNum.Lt x x).
+Proof.
+  intros x. intros H. eapply QNum.LtLeAbsurd; [exact H|]. apply QNum.LeRefl.
+Qed.
+
+Lemma cmpDenote_mul :
+  forall cmp k x y, QNum.Lt QNum.z k -> QNum.cmpDenote cmp (QNum.mul k x) (QNum.mul k y) <-> QNum.cmpDenote cmp x y.
+Proof.
+  intros cmp k x y Hk. destruct cmp; simpl; split; intros H; auto.
+  - eapply Qnum_mul_eq; [|exact H]. intros H1; rewrite H1 in Hk. apply Qnum_LtAntiRefl in Hk. auto.
+  - apply QNum.MulLe2 with (n1 := k); auto.
+  - apply QNum.MulLe1; [apply QNum.LtLe|]; auto.
+  - apply QNum.MulLt with (n1 := k); auto.
+  - rewrite <- QNum.MulLt with (n1 := k); auto.
+  - intros H1. apply H. eapply Qnum_mul_eq; [|exact H1]. intros H2; rewrite H2 in Hk. apply Qnum_LtAntiRefl in Hk; auto.
+Qed.
+
+Lemma Cstr_to_econstraint_correct :
+  forall c v, Cstr.sat c (vector_to_memQ v) <-> satisfies_extended (fst (Cstr_to_econstraint c)) v (snd (Cstr_to_econstraint c)) = true.
+Proof.
+  intros c v. unfold Cstr_to_econstraint.
+  rewrite <- get_econstraint_correct, dot_product_commutative, LinQ_to_vector_correct.
+  rewrite cmpDenote_mul; [reflexivity|].
+  rewrite <- ZtoQ.ofZ_zero, <- ZtoQ.LtCommutes.
+  apply LinQ_to_vector_positive_multiple.
+Qed.
+
+Definition Cstr_to_constraints c :=
+  let ec := Cstr_to_econstraint c in
+  econstraint_to_constraints (fst ec) (snd ec).
+
+Lemma Cstr_to_constraints_correct :
+  forall c v, Cstr.sat c (vector_to_memQ v) <-> forallb (satisfies_constraint v) (Cstr_to_constraints c) = true.
+Proof.
+  intros c v. unfold Cstr_to_constraints.
+  rewrite Cstr_to_econstraint_correct. rewrite econstraint_to_constraints_correct. reflexivity.
+Qed.
+
+Fixpoint flatten {A : Type} (l : list (list A)) :=
+  match l with
+  | nil => nil
+  | a :: l => a ++ (flatten l)
+  end.
+
+Lemma flatten_forallb :
+  forall (A : Type) (l : list (list A)) (P : A -> bool),
+    forallb (forallb P) l = forallb P (flatten l).
+Proof.
+  induction l.
+  - intros; simpl; auto.
+  - intros; simpl. rewrite IHl. rewrite forallb_app. reflexivity.
+Qed.
+
+Definition Cs_to_poly p := flatten (map Cstr_to_constraints p).
+
+Lemma Cs_to_poly_correct :
+  forall p v, Cs.sat p (vector_to_memQ v) <-> (in_poly v (Cs_to_poly p) = true).
+Proof.
+  induction p.
+  - intros v; simpl; split; auto.
+  - intros v; simpl. rewrite Cstr_to_constraints_correct. rewrite IHp. unfold Cs_to_poly. simpl. unfold in_poly.
+    rewrite forallb_app. reflect. reflexivity.
+Qed.
