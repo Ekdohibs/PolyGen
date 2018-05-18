@@ -472,6 +472,45 @@ Definition mult_constraint_cst k (c : (list Z * Z)) := (fst c, k * snd c).
 
 Definition expand_poly k pol := map (mult_constraint_cst k) pol.
 
+Lemma assign_id :
+  forall k v, assign k (nth k v 0) v =v= v.
+Proof.
+  intros k v. unfold assign.
+  rewrite <- resize_skipn_eq with (d := S k) (l := v) at 4.
+  rewrite resize_succ, <- app_assoc; reflexivity.
+Qed.
+
+Lemma dot_product_assign_right :
+  forall k s v1 v2, dot_product v1 (assign k s v2) = dot_product v1 v2 + nth k v1 0 * (s - nth k v2 0).
+Proof.
+  intros k s v1 v2.
+  rewrite <- assign_id with (k := k) (v := v1) at 1 2.
+  rewrite <- assign_id with (k := k) (v := v2) at 2.
+  unfold assign.
+  rewrite !dot_product_app by (rewrite !resize_length; reflexivity).
+  simpl. nia.
+Qed.
+
+Lemma dot_product_assign_left :
+  forall k s v1 v2, dot_product (assign k s v1) v2 = dot_product v1 v2 + nth k v2 0 * (s - nth k v1 0).
+Proof.
+  intros.
+  rewrite dot_product_commutative, dot_product_assign_right, dot_product_commutative.
+  reflexivity.
+Qed.
+
+Lemma dot_product_assign_right_zero :
+  forall k s v1 v2, nth k v1 0 = 0 -> dot_product v1 (assign k s v2) = dot_product v1 v2.
+Proof.
+  intros; rewrite dot_product_assign_right; nia.
+Qed.
+
+Lemma dot_product_assign_left_zero :
+  forall k s v1 v2, nth k v2 0 = 0 -> dot_product (assign k s v1) v2 = dot_product v1 v2.
+Proof.
+  intros; rewrite dot_product_assign_left; nia.
+Qed.
+
 Module Type PolyCanonizer (Import Imp: FullImpureMonad).
 
   Parameter canonize : polyhedron -> imp polyhedron.
@@ -524,59 +563,12 @@ End ProjectOperator.
 
 Require Import QOrderedType.
 
-Module FourierMotzkinProject (Import Imp: FullImpureMonad) <: ProjectOperator Imp.
-
-  Definition merge_constraints n c1 c2 :=
-    let '(g, (aa, bb)) := Z.ggcd (nth n (fst c1) 0) (nth n (fst c2) 0) in
-    add_constraint (mult_constraint bb c1) (mult_constraint_cst (-aa) c2).
-
-  Lemma Q_exists_rec :
-    forall (l1 l2 : list Q) (y1 : Q), ((exists x : Q, (forall y : Q, In y l1 -> (y <= x)%Q) /\ (forall z : Q, In z l2 -> (x <= z)%Q)) <->
-                                  (forall y z : Q, In y l1 -> In z l2 -> (y <= z)%Q)) ->
-                                 ((exists x : Q, (forall y : Q, In y (y1 :: l1) -> (y <= x)%Q) /\ (forall z : Q, In z l2 -> (x <= z)%Q)) <->
-                                  (forall y z : Q, In y (y1 :: l1) -> In z l2 -> (y <= z)%Q)).
-  Proof.
-    intros l1 l2 y1 [Himp1 Himp2].
-    split.
-    - intros [x [Hxy Hxz]] y z Hiny Hinz.
-      specialize (Hxy y Hiny). specialize (Hxz z Hinz). q_order.
-    - intros H. destruct Himp2 as [x [Hxy Hxz]].
-      + intros y z Hiny Hinz. apply H; simpl; auto.
-      + destruct (Qlt_le_dec x y1).
-        * exists y1. split.
-          -- intros y [Hy1| Hiny]; [rewrite Hy1 | specialize (Hxy y Hiny)]; q_order.
-          -- intros z Hinz. apply H; simpl; auto.
-        * exists x. split.
-          -- intros y [Hy1 | Hiny]; [rewrite Hy1 in *; q_order | apply Hxy; auto].
-          -- auto.
-  Qed.
-
-  Lemma Q_exists_min :
-    forall (l : list Q), exists x : Q, forall y : Q, In y l -> (x <= y)%Q.
-  Proof.
-    induction l as [|y1 l IH].
-    - exists 0%Q; intros; simpl in *; tauto.
-    - destruct IH as [x IH].
-      destruct (Qlt_le_dec x y1).
-      + exists x. intros y [Hy1 | Hiny]; [rewrite Hy1 in *; q_order | apply (IH y Hiny)].
-      + exists y1. intros y [Hy1 | Hiny]; [rewrite Hy1 | specialize (IH y Hiny)]; q_order.
-  Qed.
-
-
-  Lemma Q_exists_between :
-    forall (l1 l2 : list Q), (exists x : Q, (forall y : Q, In y l1 -> (y <= x)%Q) /\ (forall z : Q, In z l2 -> (x <= z)%Q)) <->
-                        (forall y z : Q, In y l1 -> In z l2 -> (y <= z)%Q).
-  Proof.
-    induction l1 as [|y1 l1 IH1].
-    - intros l2. split.
-      + intros; simpl in *; tauto.
-      + intros H; destruct (Q_exists_min l2) as [x Hx]; exists x.
-        split; [intros; simpl in *; tauto | apply Hx].
-    - intros l2; apply Q_exists_rec. apply IH1.
-  Qed.
-  
-
-End FourierMotzkinProject.
+Lemma mult_nth :
+  forall n k v, nth n (mult_vector k v) 0 = k * nth n v 0.
+Proof.
+  intros; unfold mult_vector.
+  erewrite <- map_nth with (l := v). f_equal. lia.
+Qed.
 
 
 Fixpoint list_max l :=
@@ -878,6 +870,306 @@ Proof.
       replace (S k <? S n)%nat with (k <? n)%nat by (rewrite eq_iff_eq_true; reflect; lia); rewrite IHn; destruct k; reflexivity.
 Qed.
 
+Lemma expand_poly_app :
+  forall s p1 p2, expand_poly s (p1 ++ p2) = expand_poly s p1 ++ expand_poly s p2.
+Proof.
+  intros s p1 p2. unfold expand_poly. rewrite map_app. reflexivity.
+Qed.
+
+Lemma in_poly_app :
+  forall p pol1 pol2, in_poly p (pol1 ++ pol2) = in_poly p pol1 && in_poly p pol2.
+Proof.
+  intros p pol1 pol2. unfold in_poly. rewrite forallb_app. reflexivity.
+Qed.
+
+Lemma add_vector_nth :
+  forall n v1 v2, nth n (add_vector v1 v2) 0 = nth n v1 0 + nth n v2 0.
+Proof.
+  induction n.
+  - intros; destruct v1; destruct v2; simpl; lia.
+  - intros; destruct v1; destruct v2; simpl; try (rewrite IHn); lia.
+Qed.
+
+Lemma flatten_In :
+  forall (A : Type) (x : A) l, In x (flatten l) <-> exists u, In x u /\ In u l.
+Proof.
+  intros A x l. induction l.
+  - simpl; firstorder.
+  - simpl. rewrite in_app_iff.
+    split.
+    + intros [H | H]; [exists a; auto|]. rewrite IHl in H; destruct H as [u Hu]; exists u; tauto.
+    + intros [u [Hxu [Hau | Hul]]]; [left; congruence|]. right; rewrite IHl; exists u; tauto.
+Qed.
+
+Module FourierMotzkinProject (Import Imp: FullImpureMonad) <: ProjectOperator Imp.
+
+  Definition merge_constraints n c1 c2 :=
+    let '(g, (aa, bb)) := Z.ggcd (nth n (fst c1) 0) (nth n (fst c2) 0) in
+    add_constraint (mult_constraint bb c1) (mult_constraint (-aa) c2).
+
+  Lemma Q_exists_rec :
+    forall (l1 l2 : list Q) (y1 : Q), ((exists x : Q, (forall y : Q, In y l1 -> (y <= x)%Q) /\ (forall z : Q, In z l2 -> (x <= z)%Q)) <->
+                                  (forall y z : Q, In y l1 -> In z l2 -> (y <= z)%Q)) ->
+                                 ((exists x : Q, (forall y : Q, In y (y1 :: l1) -> (y <= x)%Q) /\ (forall z : Q, In z l2 -> (x <= z)%Q)) <->
+                                  (forall y z : Q, In y (y1 :: l1) -> In z l2 -> (y <= z)%Q)).
+  Proof.
+    intros l1 l2 y1 [Himp1 Himp2].
+    split.
+    - intros [x [Hxy Hxz]] y z Hiny Hinz.
+      specialize (Hxy y Hiny). specialize (Hxz z Hinz). q_order.
+    - intros H. destruct Himp2 as [x [Hxy Hxz]].
+      + intros y z Hiny Hinz. apply H; simpl; auto.
+      + destruct (Qlt_le_dec x y1).
+        * exists y1. split.
+          -- intros y [Hy1| Hiny]; [rewrite Hy1 | specialize (Hxy y Hiny)]; q_order.
+          -- intros z Hinz. apply H; simpl; auto.
+        * exists x. split.
+          -- intros y [Hy1 | Hiny]; [rewrite Hy1 in *; q_order | apply Hxy; auto].
+          -- auto.
+  Qed.
+
+  Lemma Q_exists_min :
+    forall (l : list Q), exists x : Q, forall y : Q, In y l -> (x <= y)%Q.
+  Proof.
+    induction l as [|y1 l IH].
+    - exists 0%Q; intros; simpl in *; tauto.
+    - destruct IH as [x IH].
+      destruct (Qlt_le_dec x y1).
+      + exists x. intros y [Hy1 | Hiny]; [rewrite Hy1 in *; q_order | apply (IH y Hiny)].
+      + exists y1. intros y [Hy1 | Hiny]; [rewrite Hy1 | specialize (IH y Hiny)]; q_order.
+  Qed.
+
+
+  Lemma Q_exists_between :
+    forall (l1 l2 : list Q), (exists x : Q, (forall y : Q, In y l1 -> (y <= x)%Q) /\ (forall z : Q, In z l2 -> (x <= z)%Q)) <->
+                        (forall y z : Q, In y l1 -> In z l2 -> (y <= z)%Q).
+  Proof.
+    induction l1 as [|y1 l1 IH1].
+    - intros l2. split.
+      + intros; simpl in *; tauto.
+      + intros H; destruct (Q_exists_min l2) as [x Hx]; exists x.
+        split; [intros; simpl in *; tauto | apply Hx].
+    - intros l2; apply Q_exists_rec. apply IH1.
+  Qed.
+
+  Definition bound k c p :=
+    (inject_Z (snd c - dot_product (assign k 0 p) (fst c))%Z / inject_Z (nth k (fst c) 0)%Z)%Q.
+
+  Lemma assign_0_eq :
+    forall k c p s, nth k (fst c) 0 = 0 -> satisfies_constraint (assign k s p) c = satisfies_constraint p c.
+  Proof.
+    intros k c p s H.
+    unfold satisfies_constraint. f_equal. apply dot_product_assign_left_zero; auto.
+  Qed.
+
+  Lemma assign_pos_bound :
+    forall k c p s t , 0 < nth k (fst c) 0 -> 0 < t ->
+                  satisfies_constraint (assign k s (mult_vector t p)) (mult_constraint_cst t c) =
+                  (Qle_bool (inject_Z s / inject_Z t) (bound k c p))%Q.
+  Proof.
+    intros k c p s t Hckpos Htpos. unfold bound.
+    destruct t as [|tpos|tneg]; [lia| |lia].
+    destruct (nth k (fst c) 0) as [|upos|uneg] eqn:Hu; [lia| |lia].
+    unfold satisfies_constraint, Qle_bool, Qdiv, Qmult, Qinv, inject_Z; simpl.
+    rewrite !dot_product_assign_left, dot_product_mult_left, mult_nth.
+    rewrite eq_iff_eq_true; reflect. destruct (snd c); nia.
+  Qed.
+
+  Lemma assign_neg_bound :
+    forall k c p s t , nth k (fst c) 0 < 0 -> 0 < t ->
+                  satisfies_constraint (assign k s (mult_vector t p)) (mult_constraint_cst t c) =
+                  (Qle_bool (bound k c p) (inject_Z s / inject_Z t))%Q.
+  Proof.
+    intros k c p s t Hckpos Htpos. unfold bound.
+    destruct t as [|tpos|tneg]; [lia| |lia].
+    destruct (nth k (fst c) 0) as [|upos|uneg] eqn:Hu; [lia|lia|].
+    unfold satisfies_constraint, Qle_bool, Qdiv, Qmult, Qinv, inject_Z; simpl.
+    rewrite !dot_product_assign_left, dot_product_mult_left, mult_nth.
+    rewrite eq_iff_eq_true; reflect. destruct (snd c); nia.
+  Qed.
+
+  Lemma is_projected_separate :
+    forall n pol p s, 0 < s ->
+      (exists t k, 0 < t /\ in_poly (assign n k (mult_vector t p)) (expand_poly (s * t) pol) = true) <->
+      (in_poly p (expand_poly s (filter (fun c => nth n (fst c) 0 =? 0) pol)) = true /\
+       forall y z, In y (map (fun c => bound n (mult_constraint_cst s c) p) (filter (fun c => nth n (fst c) 0 <? 0) pol)) ->
+              In z (map (fun c => bound n (mult_constraint_cst s c) p) (filter (fun c => nth n (fst c) 0 >? 0) pol)) ->
+              (y <= z)%Q).
+  Proof.
+    intros n pol p s Hs.
+    rewrite <- Q_exists_between.
+    split.
+    - intros [t [k [Ht Hin]]]. split.
+      + unfold in_poly, expand_poly in *.
+        rewrite forallb_map, forallb_forall in *. intros c Hinc.
+        rewrite filter_In in Hinc. destruct Hinc as [Hinc Hnthc].
+        specialize (Hin c Hinc). reflect.
+        rewrite assign_0_eq, Z.mul_comm, <- mult_constraint_cst_comp, mult_constraint_cst_eq in Hin by (simpl; auto).
+        exact Hin.
+      + exists ((inject_Z k) / (inject_Z t))%Q. split.
+        * intros y Hy. rewrite in_map_iff in Hy; destruct Hy as [c [Hy Hinc]].
+          rewrite filter_In in Hinc; destruct Hinc as [Hinc Hnthc]. reflect.
+          rewrite <- Hy. rewrite <- Qle_bool_iff, <- assign_neg_bound by auto.
+          rewrite mult_constraint_cst_comp. unfold in_poly in Hin. rewrite forallb_forall in Hin.
+          apply Hin. rewrite Z.mul_comm. unfold expand_poly. apply in_map. auto.
+        * intros y Hy. rewrite in_map_iff in Hy; destruct Hy as [c [Hy Hinc]].
+          rewrite filter_In in Hinc; destruct Hinc as [Hinc Hnthc]. reflect.
+          rewrite <- Hy. rewrite <- Qle_bool_iff, <- assign_pos_bound by auto.
+          rewrite mult_constraint_cst_comp. unfold in_poly in Hin. rewrite forallb_forall in Hin.
+          apply Hin. rewrite Z.mul_comm. unfold expand_poly. apply in_map. auto.
+    - intros [Hin0 [x [Hinneg Hinpos]]].
+      exists (Zpos (Qden x)). exists (Qnum x).
+      split; [lia|].
+      unfold in_poly, expand_poly in *. rewrite forallb_map, forallb_forall in *.
+      intros c Hinc.
+      destruct (Z.compare_spec (nth n (fst c) 0) 0).
+      + rewrite assign_0_eq, Z.mul_comm, <- mult_constraint_cst_comp, mult_constraint_cst_eq by (simpl; auto; lia).
+        apply Hin0. rewrite filter_In. reflect; auto.
+      + rewrite Z.mul_comm, <- mult_constraint_cst_comp, assign_neg_bound, Qle_bool_iff, <- Qmake_Qdiv by (auto; lia).
+        apply Hinneg. rewrite in_map_iff; exists c; split; [auto|].
+        rewrite filter_In; reflect; auto.
+      + rewrite Z.mul_comm, <- mult_constraint_cst_comp, assign_pos_bound, Qle_bool_iff, <- Qmake_Qdiv by (auto; lia).
+        apply Hinpos. rewrite in_map_iff; exists c; split; [auto|].
+        rewrite filter_In; reflect; auto.
+  Qed.
+
+  Lemma merge_constraints_correct :
+    forall n c1 c2 p, nth n (fst c1) 0 < 0 -> nth n (fst c2) 0 > 0 ->
+                 satisfies_constraint p (merge_constraints n c1 c2) =
+                 Qle_bool (bound n c1 p) (bound n c2 p).
+  Proof.
+    intros n c1 c2 p Hneg Hpos.
+    unfold merge_constraints, bound.
+    destruct (nth n (fst c1) 0) as [|a|a] eqn:Ha; [lia|lia|].
+    destruct (nth n (fst c2) 0) as [|b|b] eqn:Hb; [lia| |lia].
+    generalize (Z.ggcd_correct_divisors (Zneg a) (Zpos b)). generalize (Z.ggcd_gcd (Zneg a) (Zpos b)).
+    destruct Z.ggcd as [g [aa bb]] eqn:Hggcd. simpl. intros Hg [Hag Hbg].
+    unfold satisfies_constraint, Qle_bool, Qdiv, Qmult, Qinv, inject_Z. simpl.
+    rewrite add_vector_dot_product_distr_right, !dot_product_mult_right.
+    rewrite !dot_product_assign_left, Ha, Hb, eq_iff_eq_true; reflect.
+    rewrite Z.mul_le_mono_pos_l with (p := g) by lia. nia.
+  Qed.
+
+  Lemma merge_constraints_mult_constraint_cst :
+    forall n c1 c2 s, merge_constraints n (mult_constraint_cst s c1) (mult_constraint_cst s c2) =
+                 mult_constraint_cst s (merge_constraints n c1 c2).
+  Proof.
+    intros n c1 c2 s; unfold merge_constraints, mult_constraint_cst, add_constraint, mult_constraint.
+    simpl. destruct (Z.ggcd (nth n (fst c1) 0) (nth n (fst c2) 0)) as [g [aa bb]]. simpl.
+    f_equal. nia.
+  Qed.
+
+  Definition pure_project n p :=
+    let zero := filter (fun c => nth n (fst c) 0 =? 0) p in
+    let pos := filter (fun c => nth n (fst c) 0 >? 0) p in
+    let neg := filter (fun c => nth n (fst c) 0 <? 0) p in
+    zero ++ flatten (map (fun nc => map (merge_constraints n nc) pos) neg).
+
+  Definition project np := pure (pure_project (fst np) (snd np)).
+
+  Theorem pure_project_in_iff :
+    forall n p pol s, 0 < s -> in_poly p (expand_poly s (pure_project n pol)) = true <->
+                         exists t k, 0 < t /\ in_poly (assign n k (mult_vector t p)) (expand_poly (s * t) pol) = true.
+  Proof.
+    intros n p pol s Hs.
+    rewrite is_projected_separate by auto.
+    unfold pure_project. rewrite expand_poly_app, in_poly_app, andb_true_iff.
+    f_equiv. unfold in_poly, expand_poly.
+    rewrite forallb_map, <- flatten_forallb, forallb_map, forallb_forall.
+    split.
+    - intros H y z Hiny Hinz.
+      rewrite in_map_iff in Hiny, Hinz; destruct Hiny as [cy [Hy Hiny]]; destruct Hinz as [cz [Hz Hinz]].
+      specialize (H cy Hiny). rewrite forallb_map, forallb_forall in H. specialize (H cz Hinz).
+      rewrite filter_In in Hiny, Hinz; reflect.
+      rewrite <- Hy, <- Hz, <- Qle_bool_iff, <- merge_constraints_correct by (simpl; lia).
+      rewrite merge_constraints_mult_constraint_cst; exact H.
+    - intros H cy Hincy. rewrite forallb_map, forallb_forall. intros cz Hincz.
+      rewrite <- merge_constraints_mult_constraint_cst, merge_constraints_correct by (rewrite filter_In in *; reflect; simpl; lia).
+      rewrite Qle_bool_iff; apply H; rewrite in_map_iff; [exists cy | exists cz]; auto.
+  Qed.
+
+  Theorem project_in_iff :
+    forall n p pol s, 0 < s ->
+                 WHEN proj <- project (n, pol) THEN
+                      in_poly p (expand_poly s proj) = true <->
+                 exists t k, 0 < t /\ in_poly (assign n k (mult_vector t p)) (expand_poly (s * t) pol) = true.
+  Proof.
+    intros n p pol s Hs proj Hproj.
+    unfold project in Hproj. apply mayReturn_pure in Hproj. simpl in Hproj. rewrite <- Hproj.
+    apply pure_project_in_iff; auto.
+  Qed.
+
+  Theorem merge_constraints_projected :
+    forall n c1 c2, nth n (fst (merge_constraints n c1 c2)) 0 = 0.
+  Proof.
+    intros n c1 c2.
+    unfold merge_constraints, add_constraint, mult_constraint.
+    generalize (Z.ggcd_correct_divisors (nth n (fst c1) 0) (nth n (fst c2) 0)).
+    destruct Z.ggcd as [g [aa bb]]. intros [H1 H2]. simpl.
+    rewrite add_vector_nth, !mult_nth. nia.
+  Qed.
+
+  Lemma pure_project_constraint_in :
+    forall n pol c, In c (pure_project n pol) ->
+               ((In c pol /\ nth n (fst c) 0 = 0) \/
+                (exists y z, In y pol /\ In z pol /\ nth n (fst y) 0 < 0 /\ 0 < nth n (fst z) 0 /\ c = merge_constraints n y z)).
+  Proof.
+    intros n pol c Hin. unfold pure_project in Hin.
+    rewrite in_app_iff in Hin. destruct Hin as [Hin | Hin].
+    - left; rewrite filter_In in Hin. reflect; tauto.
+    - right; rewrite flatten_In in Hin. destruct Hin as [u [Hinu Huin]].
+      rewrite in_map_iff in Huin; destruct Huin as [nc [Hu Hnc]].
+      rewrite <- Hu, in_map_iff in Hinu. destruct Hinu as [pc [Hc Hpc]].
+      rewrite <- Hc. exists nc; exists pc.
+      rewrite filter_In in *; reflect; tauto.
+  Qed.
+
+  Theorem pure_project_projected :
+    forall n pol c, In c (pure_project n pol) -> nth n (fst c) 0 = 0.
+  Proof.
+    intros n pol c Hin. apply pure_project_constraint_in in Hin.
+    destruct Hin as [[Hcin Hcn] | [y [z [Hyin [Hzin [Hyn [Hzn Hc]]]]]]].
+    - auto.
+    - rewrite Hc. apply merge_constraints_projected.
+  Qed.
+
+  Theorem project_projected :
+    forall n pol, WHEN proj <- project (n, pol) THEN forall c, In c proj -> nth n (fst c) 0 = 0.
+  Proof.
+    intros n pol proj Hproj c Hinproj.
+    unfold project in Hproj; apply mayReturn_pure in Hproj; rewrite <- Hproj in *; simpl in *.
+    eapply pure_project_projected; eauto.
+  Qed.
+
+  Theorem merge_constraints_no_new_var :
+    forall n k c1 c2, nth k (fst c1) 0 = 0 -> nth k (fst c2) 0 = 0 -> nth k (fst (merge_constraints n c1 c2)) 0 = 0.
+  Proof.
+    intros n k c1 c2 Hc1 Hc2.
+    unfold merge_constraints, add_constraint, mult_constraint.
+    destruct Z.ggcd as [g [aa bb]]. simpl.
+    rewrite add_vector_nth, !mult_nth. nia.
+  Qed.
+
+  Theorem pure_project_no_new_var :
+    forall n k pol, (forall c, In c pol -> nth k (fst c) 0 = 0) -> (forall c, In c (pure_project n pol) -> nth k (fst c) 0 = 0).
+  Proof.
+    intros n k pol H c Hin.
+    apply pure_project_constraint_in in Hin.
+    destruct Hin as [[Hcin Hcn] | [y [z [Hyin [Hzin [Hyn [Hzn Hc]]]]]]].
+    - auto.
+    - rewrite Hc. apply merge_constraints_no_new_var; auto.
+  Qed.
+
+  Theorem project_no_new_var :
+    forall n k pol, (forall c, In c pol -> nth k (fst c) 0 = 0) -> WHEN proj <- project (n, pol) THEN (forall c, In c proj -> nth k (fst c) 0 = 0).
+  Proof.
+    intros n k pol H proj Hproj.
+    unfold project in Hproj; apply mayReturn_pure in Hproj; rewrite <- Hproj in *; simpl in *.
+    eapply pure_project_no_new_var; eauto.
+  Qed.
+
+End FourierMotzkinProject.
+
 Module PolyProjectImpl (Import Imp: FullImpureMonad) (Canon : PolyCanonizer Imp) (Proj : ProjectOperator Imp) <: PolyProject Imp.
 
   Ltac bind_imp_destruct H id1 id2 :=
@@ -1138,92 +1430,21 @@ Module PolyProjectImpl (Import Imp: FullImpureMonad) (Canon : PolyCanonizer Imp)
 
 End PolyProjectImpl.
 
-(*
-Module PolyProjectVPL (Dom : HasAssume QNum Cstr BasicD) <: PolyProject.
-
-  Axiom extractImp : forall A, imp A -> A.
-
-  Definition project n p := Ok p.
-
-  Theorem project_inclusion :
-    forall n p pol proj, project n pol = Ok proj -> in_poly p pol = true -> in_poly (resize n p) proj = true.
-  Proof.
-  Admitted.
-
-  Definition project_invariant n pol p :=
-    forall c, In c pol -> fst c =v= resize n (fst c) -> satisfies_constraint p c = true.
-
-  Theorem project_invariant_inclusion :
-    forall n pol p, in_poly p pol = true -> project_invariant n pol (resize n p).
-  Proof.
-  Admitted.
-
-  Theorem project_id :
-    forall n pol p, (forall c, In c pol -> fst c =v= resize n (fst c)) -> project_invariant n pol p -> in_poly p pol = true.
-  Proof.
-  Admitted.
-
-  Theorem project_next_r_inclusion :
-    forall n pol proj p, project (S n) pol = Ok proj -> project_invariant n pol p ->
-                    (forall c, In c proj -> nth n (fst c) 0 <> 0 -> satisfies_constraint p c = true) -> project_invariant (S n) pol p.
-  Proof.
-  Admitted.
-
-  Theorem project_invariant_resize :
-    forall n pol p, project_invariant n pol p <-> project_invariant n pol (resize n p).
-  Proof.
-  Admitted.
-
-  Definition project_invariant_export n (pol : polyhedron) :=
-    Ok (filter (fun c => is_eq (fst c) (resize n (fst c))) pol).
-
-  Theorem project_invariant_export_correct :
-    forall n p pol res, project_invariant_export n pol = Ok res -> in_poly p res = true <-> project_invariant n pol p.
-  Proof.
-  Admitted.
-
-  Theorem project_constraint_size :
-    forall n pol proj c, project n pol = Ok proj -> In c proj -> fst c =v= resize n (fst c).
-  Proof.
-  Admitted.
-
-End PolyProjectVPL.
- *)
-
 Import CoreAlarmed.
+
+(*
 Module PPS := PolyProjectSimple CoreAlarmed.
 Import PPS.
+*)
+
+Module Proj := FourierMotzkinProject CoreAlarmed.
+Module Canon := NaiveCanonizer CoreAlarmed.
+Module PO := PolyProjectImpl CoreAlarmed Canon Proj.
+Import PO.
+
 Global Opaque project.
 Ltac bind_imp_destruct H id1 id2 :=
   apply mayReturn_bind in H; destruct H as [id1 [id2 H]].
-
-(*
-Theorem project_id :
-  forall n pol proj p, project n pol = Ok proj -> (forall c, In c pol -> fst c =v= resize n (fst c)) -> in_poly p proj = true -> in_poly p pol = true.
-Proof.
-  intros n pol proj p Hproj Hplen Hin.
-  unfold project in Hproj.
-  destruct (untrusted_project n pol) as [res wits].
-  destruct_if Hproj Hlen; [congruence|].
-  destruct_if Hproj Hresize; [congruence|].
-  destruct_if Hproj Hwits; [congruence|].
-  destruct_if Hproj Hpreserve; [congruence|].
-  injection Hproj as Hproj; rewrite Hproj in *.
-  reflect. unfold in_poly in *. reflect_binders.
-  intros c Hc; specialize (Hpreserve c Hc). specialize (Hplen c Hc).
-  rewrite <- Hplen in Hpreserve. rewrite is_eq_reflexive in Hpreserve.
-  destruct Hpreserve as [Hpreserve | [x  [H1 [H2 H3]]]]; [congruence|].
-  unfold satisfies_constraint. rewrite H2; rewrite H3. apply Hin; auto.
-Qed.
-
-Theorem project_next_r_inclusion :
-  forall n pol proj1 proj2 p, project n pol = Ok proj1 -> project (S n) pol = Ok proj2 -> in_poly p proj1 = true ->
-                         (forall c, In c proj2 -> nth n (fst c) 0 <> 0 -> satisfies_constraint p c = true) -> in_poly p proj2 = true.
-Proof.
-  intros n pol proj1 proj2 p Hproj1 Hproj2 Hinp1 Hsat.
-Admitted.
-*)
-
 
 (** * Generating the code *)
 
