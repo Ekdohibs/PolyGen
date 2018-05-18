@@ -251,20 +251,6 @@ Proof.
   reflexivity.
 Qed.
 
-Fixpoint list_max l :=
-  match l with
-  | nil => 0%nat
-  | x :: l => Nat.max x (list_max l)
-  end.
-
-Lemma list_max_correct :
-  forall l x, In x l -> (x <= list_max l)%nat.
-Proof.
-  induction l.
-  - intros; simpl in *; tauto.
-  - intros x H; simpl in *; destruct H as [H | H]; [|specialize (IHl x H)]; lia.
-Qed.
-
 Definition max_binding {A : Type} (l : PositiveMap.t A) :=
   list_max (map (fun x => Pos.to_nat (fst x)) (PositiveMap.elements l)).
 
@@ -273,7 +259,7 @@ Theorem max_binding_correct :
 Proof.
   intros A l x v H.
   unfold max_binding.
-  apply list_max_correct.
+  apply list_max_ge.
   rewrite in_map_iff. exists (x, v).
   simpl. split; [auto|].
   apply PositiveMap.elements_correct; auto.
@@ -653,8 +639,6 @@ Proof.
     reflect. lia.
 Qed.
 
-(* Search ZtoQ.ceil. *)
-Search ZtoQ.ofZ.
 Definition get_econstraint cmp lin (q : QNum.t) :=
   match cmp with
   | EqT => if (q.(this).(Qden) =? 1)%positive then (EqT, (lin, q.(this).(Qnum))) else (LeT, (@nil Z, -1))
@@ -744,21 +728,6 @@ Lemma Cstr_to_constraints_correct :
 Proof.
   intros c v. unfold Cstr_to_constraints.
   rewrite Cstr_to_econstraint_correct. rewrite econstraint_to_constraints_correct. reflexivity.
-Qed.
-
-Fixpoint flatten {A : Type} (l : list (list A)) :=
-  match l with
-  | nil => nil
-  | a :: l => a ++ (flatten l)
-  end.
-
-Lemma flatten_forallb :
-  forall (A : Type) (l : list (list A)) (P : A -> bool),
-    forallb (forallb P) l = forallb P (flatten l).
-Proof.
-  induction l.
-  - intros; simpl; auto.
-  - intros; simpl. rewrite IHl. rewrite forallb_app. reflexivity.
 Qed.
 
 Definition Cs_to_poly p := flatten (map Cstr_to_constraints p).

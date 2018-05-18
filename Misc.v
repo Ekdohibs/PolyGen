@@ -37,6 +37,34 @@ Proof.
   - intros; destruct p; simpl in *; auto; lia.
 Qed.
 
+Lemma skipn_app_le :
+  forall (A : Type) n (v1 v2 : list A), (length v1 <= n)%nat -> skipn n (v1 ++ v2) = skipn (n - length v1) v2.
+Proof.
+  intros A n; induction n.
+  - intros; simpl in *.
+    destruct v1; simpl in *; auto; lia.
+  - intros v1 v2 H; destruct v1.
+    + reflexivity.
+    + simpl in *; apply IHn; lia.
+Qed.
+
+Lemma skipn_app_ge :
+  forall (A : Type) n (v1 v2 : list A), (n <= length v1)%nat -> skipn n (v1 ++ v2) = skipn n v1 ++ v2.
+Proof.
+  intros A n; induction n.
+  - intros; simpl; auto.
+  - intros; destruct v1; simpl in *; [|apply IHn]; lia.
+Qed.
+
+Lemma firstn_nth_app :
+  forall A n (l : list A) d, (length l >= S n)%nat -> firstn (S n) l = firstn n l ++ (nth n l d :: nil).
+Proof.
+  intros A. induction n.
+  - intros l d H; destruct l; simpl in *; [lia | auto].
+  - intros l d H; destruct l; simpl in *; [lia |].
+    erewrite IHn by lia. reflexivity.
+Qed.
+
 Lemma map_nth_error_none :
   forall A B n (f : A -> B) l, nth_error l n = None -> nth_error (map f l) n = None.
 Proof.
@@ -79,6 +107,31 @@ Proof.
     lia.
 Qed.
 
+Fixpoint flatten {A : Type} (l : list (list A)) :=
+  match l with
+  | nil => nil
+  | a :: l => a ++ (flatten l)
+  end.
+
+Lemma flatten_forallb :
+  forall (A : Type) (l : list (list A)) (P : A -> bool),
+    forallb (forallb P) l = forallb P (flatten l).
+Proof.
+  induction l.
+  - intros; simpl; auto.
+  - intros; simpl. rewrite IHl. rewrite forallb_app. reflexivity.
+Qed.
+
+Lemma flatten_In :
+  forall (A : Type) (x : A) l, In x (flatten l) <-> exists u, In x u /\ In u l.
+Proof.
+  intros A x l. induction l.
+  - simpl; firstorder.
+  - simpl. rewrite in_app_iff.
+    split.
+    + intros [H | H]; [exists a; auto|]. rewrite IHl in H; destruct H as [u Hu]; exists u; tauto.
+    + intros [u [Hxu [Hau | Hul]]]; [left; congruence|]. right; rewrite IHl; exists u; tauto.
+Qed.
 
 (** * Tactics for rewriting under binders *)
 
@@ -173,6 +226,48 @@ Proof.
   intros l1 l2.
   reflect_binders. reflexivity.
 Qed.
+
+(** * Handlings [if]s *)
+
+Tactic Notation "case_if" "in" hyp(H) :=
+  lazymatch goal with
+    | [ H : context[if ?X then _ else _] |- _ ] => destruct X
+  end.
+
+Tactic Notation "case_if" "in" hyp(H) "as" simple_intropattern(Has) :=
+  lazymatch goal with
+    | [ H : context[if ?X then _ else _] |- _ ] => destruct X as Has
+  end.
+
+Tactic Notation "case_if" "in" hyp(H) "eq" ident(Heq) :=
+  lazymatch goal with
+    | [ H : context[if ?X then _ else _] |- _ ] => destruct X eqn:Heq
+  end.
+
+Tactic Notation "case_if" "in" hyp(H) "as" simple_intropattern(Has) "eq" ident(Heq) :=
+  lazymatch goal with
+    | [ H : context[if ?X then _ else _] |- _ ] => destruct X as Has eqn:Heq
+  end.
+
+Tactic Notation "case_if" :=
+  lazymatch goal with
+    | [ |- context[if ?X then _ else _] ] => destruct X
+  end.
+
+Tactic Notation "case_if" "as" simple_intropattern(Has) :=
+  lazymatch goal with
+    | [ |- context[if ?X then _ else _] ] => destruct X as Has
+  end.
+
+Tactic Notation "case_if" "eq" ident(Heq) :=
+  lazymatch goal with
+    | [ |- context[if ?X then _ else _] ] => destruct X eqn:Heq
+  end.
+
+Tactic Notation "case_if" "as" simple_intropattern(Has) "eq" ident(Heq) :=
+  lazymatch goal with
+    | [ |- context[if ?X then _ else _] ] => destruct X as Has eqn:Heq
+  end.
 
 (** * Integer ranges *)
 
@@ -278,4 +373,46 @@ Lemma div_gt_iff :
   forall x y z, 0 < z -> x < y / z <-> x * z + z - 1 < y.
 Proof.
   intros x y z Hz. rewrite <- !Z.nle_gt. apply not_iff_compat. rewrite div_le_iff by lia. nia.
+Qed.
+
+(** * Maximum of lists of [nat] *)
+
+Fixpoint list_max l :=
+  match l with
+  | nil => 0%nat
+  | x :: l => Nat.max x (list_max l)
+  end.
+
+Theorem list_max_le :
+  forall l n, (list_max l <= n -> (forall x, In x l -> x <= n))%nat.
+Proof.
+  induction l; simpl in *.
+  - intros; exfalso; auto.
+  - intros n H x [Ha | Hl].
+    + lia.
+    + apply IHl; auto; lia.
+Qed.
+
+Theorem list_le_max :
+  forall l n, (forall x, In x l -> x <= n)%nat -> (list_max l <= n)%nat.
+Proof.
+  induction l; simpl in *.
+  - intros; lia.
+  - intros n H. apply Nat.max_lub.
+    + apply H; auto.
+    + apply IHl; intros; apply H; auto.
+Qed.
+
+Theorem list_max_le_iff :
+  forall l n, (list_max l <= n <-> (forall x, In x l -> x <= n))%nat.
+Proof.
+  intros l n; split; [apply list_max_le | apply list_le_max].
+Qed.
+
+Lemma list_max_ge :
+  forall l x, In x l -> (x <= list_max l)%nat.
+Proof.
+  induction l.
+  - intros; simpl in *; tauto.
+  - intros x H; simpl in *; destruct H as [H | H]; [|specialize (IHl x H)]; lia.
 Qed.

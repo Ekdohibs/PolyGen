@@ -1,6 +1,6 @@
-Require Import String.
-
 Require Import QArith.
+Require Import QOrderedType.
+
 Require Import ZArith.
 Require Import List.
 Require Import Bool.
@@ -12,55 +12,15 @@ Require Import Loop.
 Require Import PolyLang.
 Require Import Misc.
 Require Import Instr.
+Require Import VplInterface.
+Require Import Result.
+
+Require Import Vpl.Impure.
+Require Vpl.ImpureConfig.
 
 Open Scope Z_scope.
 Open Scope list_scope.
 
-(** * Definition and properties of the [result] type *)
-(** A result is the same as an option, but with an error message in case of failure *)
-
-Inductive result (A : Type) :=
-| Ok : A -> result A
-| Err : string -> result A.
-
-Arguments Ok {A}.
-Arguments Err {A}.
-
-Definition bind {A : Type} (a : result A) {B : Type} (f : A -> result B) :=
-  match a with
-  | Ok x => f x
-  | Err s => Err s
-  end.
-
-Notation "a >>= f" := (bind a f) (at level 50, left associativity).
-Notation "'do' a <- e ; c" := (e >>= (fun a => c)) (at level 60, right associativity).
-
-Lemma result_right_unit :
-  forall A (a : result A), a = bind a (@Ok A).
-Proof.
-  intros; destruct a; auto.
-Qed.
-
-Lemma result_left_unit :
-  forall A (a : A) B (f : A -> result B), f a = bind (Ok a) f.
-Proof.
-  intros; reflexivity.
-Qed.
-
-Lemma result_associativity :
-  forall A (a : result A) B f C (g : B -> result C), bind a (fun x => bind (f x) g) = bind (bind a f) g.
-Proof.
-  intros; destruct a; reflexivity.
-Qed.
-
-Lemma bind_ok :
-  forall A B a (f : A -> result B) x, a >>= f = Ok x -> exists y, a = Ok y /\ f y = Ok x.
-Proof.
-  intros; destruct a as [a|]; simpl in *; eauto; congruence.
-Qed.
-
-Ltac bind_ok_destruct H id1 id2 :=
-  apply bind_ok in H; destruct H as [id1 [id2 H]].
   
 
 (*
@@ -93,15 +53,6 @@ Fixpoint make_linear_expr (n : nat) (l : list Z) :=
   | S n, x :: l => Sum (Mult x (Var n)) (make_linear_expr n l)
   end.
 
-Lemma firstn_nth_app :
-  forall A n (l : list A) d, (length l >= S n)%nat -> firstn (S n) l = firstn n l ++ (nth n l d :: nil).
-Proof.
-  intros A. induction n.
-  - intros l d H; destruct l; simpl in *; [lia | auto].
-  - intros l d H; destruct l; simpl in *; [lia |].
-    erewrite IHn by lia. reflexivity.
-Qed.
-
 Theorem make_linear_expr_correct_aux :
   forall n l env, (length env >= n)%nat -> eval_expr env (make_linear_expr n l) = dot_product l (rev (firstn n env)).
 Proof.
@@ -132,6 +83,7 @@ Qed.
 
 Definition make_lower_bound n c :=
   Div (Sum (Constant ((- nth n (fst c) 0) - 1)) (make_affine_expr n (fst c, -(snd c)))) (-(nth n (fst c) 0)).
+
 Lemma make_lower_bound_correct :
   forall n c env x, length env = n -> nth n (fst c) 0 < 0 -> (eval_expr env (make_lower_bound n c) <= x <-> satisfies_constraint (rev env ++ x :: nil) c = true).
 Proof.
@@ -152,6 +104,7 @@ Qed.
 
 Definition make_upper_bound n c :=
   Div (Sum (Constant (nth n (fst c) 0)) (make_affine_expr n (mult_vector (-1) (fst c), snd c))) (nth n (fst c) 0).
+
 Lemma make_upper_bound_correct :
   forall n c env x, length env = n -> 0 < nth n (fst c) 0 -> (x < eval_expr env (make_upper_bound n c) <-> satisfies_constraint (rev env ++ x :: nil) c = true).
 Proof.
@@ -169,6 +122,7 @@ Proof.
     ].
   rewrite div_gt_iff by lia. nia.
 Qed.
+
 Opaque make_lower_bound make_upper_bound.
 
 (** * Finding the upper and lower bounds for a given variable of a polyhedron *)
@@ -181,6 +135,7 @@ Fixpoint find_lower_bound_aux (e : option expr) (n : nat) (p : polyhedron) :=
              else
                find_lower_bound_aux e n p
   end.
+
 Lemma find_lower_bound_aux_correct :
   forall n pol env x e lb, find_lower_bound_aux e n pol = Ok lb -> length env = n ->
                       eval_expr env lb <= x <->
@@ -213,6 +168,7 @@ Fixpoint find_upper_bound_aux (e : option expr) (n : nat) (p : polyhedron) :=
              else
                find_upper_bound_aux e n p
   end.
+
 Lemma find_upper_bound_aux_correct :
   forall n pol env x e ub, find_upper_bound_aux e n pol = Ok ub -> length env = n ->
                       x < eval_expr env ub <->
@@ -269,15 +225,11 @@ Proof.
   - intros H; split; intros c Hin Hcmp; apply H; auto; lia.
 Qed.
 
-(*
-Require Import Vpl.DomainInterfaces.
-Require Import Vpl.ConsSet.
-Require Import Vpl.PedraQ.
-Require Import VplInterface.
- *)
-Require Import Vpl.Impure.
-
-(** * Polyhedral projection, using an untrusted oracle and a certificate *)
+(** * Polyhedral projection *)
+(** Two different implementations:
+- an untrusted oracle and a certificate
+- Fourier-Motzkin elimination and polyhedral canonization (that can use an untrusted oracle)
+*)
 
 Module Type PolyProject (Import Imp: FullImpureMonad).
   Parameter project : nat * polyhedron -> imp polyhedron.
@@ -312,20 +264,6 @@ Module Type PolyProject (Import Imp: FullImpureMonad).
 
 End PolyProject.
 
-Ltac destruct_if H Heq :=
-  lazymatch goal with
-    | [ H : context[if ?X then _ else _] |- _ ] => destruct X eqn:Heq
-  end.
-
-Ltac destruct_if_g Heq :=
-  lazymatch goal with
-    | [ |- context[if ?X then _ else _] ] => destruct X eqn:Heq
-  end.
-
-Require Vpl.ImpureConfig.
-
-Module CoreAlarmed := AlarmImpureMonad Vpl.ImpureConfig.Core.
-
 Module PolyProjectSimple (Import Imp: FullAlarmedMonad) <: PolyProject Imp.
 
   Parameter untrusted_project : nat -> polyhedron -> (polyhedron * list witness)%type.
@@ -350,10 +288,10 @@ Module PolyProjectSimple (Import Imp: FullAlarmedMonad) <: PolyProject Imp.
     intros n p pol Hin.
     unfold project.
     destruct (untrusted_project n pol) as [res wits].
-    destruct_if_g Hlen; reflect; [xasimplify ltac:(eauto using mayReturn_alarm)|].
-    destruct_if_g Hresize; reflect; [xasimplify ltac:(eauto using mayReturn_alarm)|].
-    destruct_if_g Hwits; reflect; [xasimplify ltac:(eauto using mayReturn_alarm)|].
-    destruct_if_g Hpreserve; reflect; [xasimplify ltac:(eauto using mayReturn_alarm)|].
+    case_if eq Hlen; reflect; [xasimplify ltac:(eauto using mayReturn_alarm)|].
+    case_if eq Hresize; reflect; [xasimplify ltac:(eauto using mayReturn_alarm)|].
+    case_if eq Hwits; reflect; [xasimplify ltac:(eauto using mayReturn_alarm)|].
+    case_if eq Hpreserve; reflect; [xasimplify ltac:(eauto using mayReturn_alarm)|].
     xasimplify eauto.
     assert (Hinres : in_poly p res = true).
     - unfold in_poly. rewrite forallb_forall. intros c Hc.
@@ -378,10 +316,10 @@ Module PolyProjectSimple (Import Imp: FullAlarmedMonad) <: PolyProject Imp.
     intros n pol c Hin Heq.
     unfold project.
     destruct (untrusted_project n pol) as [res wits].
-    destruct_if_g Hlen; reflect; [xasimplify ltac:(exfalso; eauto using mayReturn_alarm)|].
-    destruct_if_g Hresize; reflect; [xasimplify ltac:(exfalso; eauto using mayReturn_alarm)|].
-    destruct_if_g Hwits; reflect; [xasimplify ltac:(exfalso; eauto using mayReturn_alarm)|].
-    destruct_if_g Hpreserve; reflect; [xasimplify ltac:(exfalso; eauto using mayReturn_alarm)|].
+    case_if eq Hlen; reflect; [xasimplify ltac:(exfalso; eauto using mayReturn_alarm)|].
+    case_if eq Hresize; reflect; [xasimplify ltac:(exfalso; eauto using mayReturn_alarm)|].
+    case_if eq Hwits; reflect; [xasimplify ltac:(exfalso; eauto using mayReturn_alarm)|].
+    case_if eq Hpreserve; reflect; [xasimplify ltac:(exfalso; eauto using mayReturn_alarm)|].
     xasimplify eauto.
     reflect_binders.
     specialize (Hpreserve c Hin).
@@ -451,65 +389,16 @@ Module PolyProjectSimple (Import Imp: FullAlarmedMonad) <: PolyProject Imp.
   Proof.
     intros n pol c. unfold project.
     destruct (untrusted_project n pol) as [res wits].
-    destruct_if_g Hlen; reflect; [xasimplify ltac:(exfalso; eauto using mayReturn_alarm)|].
-    destruct_if_g Hresize; reflect; [xasimplify ltac:(exfalso; eauto using mayReturn_alarm)|].
-    destruct_if_g Hwits; reflect; [xasimplify ltac:(exfalso; eauto using mayReturn_alarm)|].
-    destruct_if_g Hpreserve; reflect; [xasimplify ltac:(exfalso; eauto using mayReturn_alarm)|].
+    case_if eq Hlen; reflect; [xasimplify ltac:(exfalso; eauto using mayReturn_alarm)|].
+    case_if eq Hresize; reflect; [xasimplify ltac:(exfalso; eauto using mayReturn_alarm)|].
+    case_if eq Hwits; reflect; [xasimplify ltac:(exfalso; eauto using mayReturn_alarm)|].
+    case_if eq Hpreserve; reflect; [xasimplify ltac:(exfalso; eauto using mayReturn_alarm)|].
     xasimplify eauto.
     reflect. intros Hin.
     rewrite forallb_forall in Hresize. specialize (Hresize c); reflect; eauto.
   Qed.
 
 End PolyProjectSimple.
-
-Require Import VplInterface.
-
-
-Definition assign n x v :=
-  resize n v ++ (x :: (skipn (S n) v)).
-
-Definition mult_constraint_cst k (c : (list Z * Z)) := (fst c, k * snd c).
-
-Definition expand_poly k pol := map (mult_constraint_cst k) pol.
-
-Lemma assign_id :
-  forall k v, assign k (nth k v 0) v =v= v.
-Proof.
-  intros k v. unfold assign.
-  rewrite <- resize_skipn_eq with (d := S k) (l := v) at 4.
-  rewrite resize_succ, <- app_assoc; reflexivity.
-Qed.
-
-Lemma dot_product_assign_right :
-  forall k s v1 v2, dot_product v1 (assign k s v2) = dot_product v1 v2 + nth k v1 0 * (s - nth k v2 0).
-Proof.
-  intros k s v1 v2.
-  rewrite <- assign_id with (k := k) (v := v1) at 1 2.
-  rewrite <- assign_id with (k := k) (v := v2) at 2.
-  unfold assign.
-  rewrite !dot_product_app by (rewrite !resize_length; reflexivity).
-  simpl. nia.
-Qed.
-
-Lemma dot_product_assign_left :
-  forall k s v1 v2, dot_product (assign k s v1) v2 = dot_product v1 v2 + nth k v2 0 * (s - nth k v1 0).
-Proof.
-  intros.
-  rewrite dot_product_commutative, dot_product_assign_right, dot_product_commutative.
-  reflexivity.
-Qed.
-
-Lemma dot_product_assign_right_zero :
-  forall k s v1 v2, nth k v1 0 = 0 -> dot_product v1 (assign k s v2) = dot_product v1 v2.
-Proof.
-  intros; rewrite dot_product_assign_right; nia.
-Qed.
-
-Lemma dot_product_assign_left_zero :
-  forall k s v1 v2, nth k v2 0 = 0 -> dot_product (assign k s v1) v2 = dot_product v1 v2.
-Proof.
-  intros; rewrite dot_product_assign_left; nia.
-Qed.
 
 Module Type PolyCanonizer (Import Imp: FullImpureMonad).
 
@@ -560,346 +449,6 @@ Module Type ProjectOperator (Import Imp: FullImpureMonad).
                  exists t k, 0 < t /\ in_poly (assign n k (mult_vector t p)) (expand_poly (s * t) pol) = true.
 
 End ProjectOperator.
-
-Require Import QOrderedType.
-
-Lemma mult_nth :
-  forall n k v, nth n (mult_vector k v) 0 = k * nth n v 0.
-Proof.
-  intros; unfold mult_vector.
-  erewrite <- map_nth with (l := v). f_equal. lia.
-Qed.
-
-
-Fixpoint list_max l :=
-  match l with
-  | nil => 0%nat
-  | x :: l => Nat.max x (list_max l)
-  end.
-
-Theorem list_max_le :
-  forall l n, (list_max l <= n -> (forall x, In x l -> x <= n))%nat.
-Proof.
-  induction l; simpl in *.
-  - intros; exfalso; auto.
-  - intros n H x [Ha | Hl].
-    + lia.
-    + apply IHl; auto; lia.
-Qed.
-
-Theorem list_le_max :
-  forall l n, (forall x, In x l -> x <= n)%nat -> (list_max l <= n)%nat.
-Proof.
-  induction l; simpl in *.
-  - intros; lia.
-  - intros n H. apply Nat.max_lub.
-    + apply H; auto.
-    + apply IHl; intros; apply H; auto.
-Qed.
-
-Theorem list_max_def :
-  forall l n, (list_max l <= n <-> (forall x, In x l -> x <= n))%nat.
-Proof.
-  intros l n; split; [apply list_max_le | apply list_le_max].
-Qed.
-
-Lemma mult_vector_1 :
-  forall v, mult_vector 1 v = v.
-Proof.
-  induction v; simpl; auto; destruct a; auto.
-Qed.
-
-Lemma mult_constraint_1 :
-  forall c, mult_constraint 1 c = c.
-Proof.
-  intros c; destruct c as [v x]; unfold mult_constraint.
-  simpl in *; rewrite mult_vector_1.
-  f_equal; destruct x; auto.
-Qed.
-
-Lemma mult_constraint_cst_1 :
-  forall c, mult_constraint_cst 1 c = c.
-Proof.
-  intros c; destruct c as [v x]; destruct x; auto.
-Qed.
-
-Lemma expand_poly_1 :
-  forall p, expand_poly 1 p = p.
-Proof.
-  intros p.
-  unfold expand_poly. erewrite map_ext; [apply map_id|].
-  apply mult_constraint_cst_1.
-Qed.
-
-Lemma mult_vector_resize :
-  forall n k v, resize n (mult_vector k v) = mult_vector k (resize n v).
-Proof.
-  induction n.
-  - intros; simpl in *; auto.
-  - intros; simpl in *.
-    destruct v; simpl in *; rewrite <- IHn; f_equal.
-    lia.
-Qed.
-
-Lemma mult_vector_skipn :
-  forall n k v, skipn n (mult_vector k v) = mult_vector k (skipn n v).
-Proof.
-  induction n.
-  - intros; simpl in *; auto.
-  - intros; destruct v; simpl in *; auto.
-Qed.
-
-Lemma mult_constraint_cst_eq :
-  forall c k p, 0 < k -> satisfies_constraint (mult_vector k p) (mult_constraint_cst k c) = satisfies_constraint p c.
-Proof.
-  intros c k p Hk.
-  unfold satisfies_constraint, mult_constraint_cst.
-  rewrite dot_product_mult_left. simpl.
-  apply eq_iff_eq_true. reflect.
-  nia.
-Qed.
-
-Lemma expand_poly_eq :
-  forall p k v, 0 < k -> in_poly (mult_vector k v) (expand_poly k p) = in_poly v p.
-Proof.
-  intros p k v Hk.
-  unfold in_poly, expand_poly. rewrite forallb_map. apply forallb_ext.
-  intros; apply mult_constraint_cst_eq; auto.
-Qed.
-
-Lemma mult_constraint_cst_comp :
-  forall s t c, mult_constraint_cst s (mult_constraint_cst t c) = mult_constraint_cst (s * t) c.
-Proof.
-  intros. unfold mult_constraint_cst. simpl. f_equal.
-  nia.
-Qed.
-
-Lemma expand_poly_comp :
-  forall s t p, expand_poly s (expand_poly t p) = expand_poly (s * t) p.
-Proof.
-  intros. unfold expand_poly.
-  rewrite map_map. apply map_ext.
-  apply mult_constraint_cst_comp.
-Qed.
-
-Lemma mult_vector_comp :
-  forall s t v, mult_vector s (mult_vector t v) = mult_vector (s * t) v.
-Proof.
-  intros s t v. unfold mult_vector. rewrite map_map; apply map_ext.
-  intros; nia.
-Qed.
-
-Lemma mult_vector_app :
-  forall s v1 v2, mult_vector s (v1 ++ v2) = mult_vector s v1 ++ mult_vector s v2.
-Proof.
-  intros s v1 v2. unfold mult_vector. apply map_app.
-Qed.
-
-Lemma resize_app_ge :
-  forall n v1 v2, (n <= length v1)%nat -> resize n (v1 ++ v2) = resize n v1.
-Proof.
-  induction n.
-  - intros; simpl in *; auto.
-  - intros; destruct v1; simpl in *; [|rewrite IHn]; auto; lia.
-Qed.
-
-Lemma skipn_app_le :
-  forall (A : Type) n (v1 v2 : list A), (length v1 <= n)%nat -> skipn n (v1 ++ v2) = skipn (n - length v1) v2.
-Proof.
-  intros A n; induction n.
-  - intros; simpl in *.
-    destruct v1; simpl in *; auto; lia.
-  - intros v1 v2 H; destruct v1.
-    + reflexivity.
-    + simpl in *; apply IHn; lia.
-Qed.
-
-Lemma skipn_app_ge :
-  forall (A : Type) n (v1 v2 : list A), (n <= length v1)%nat -> skipn n (v1 ++ v2) = skipn n v1 ++ v2.
-Proof.
-  intros A n; induction n.
-  - intros; simpl; auto.
-  - intros; destruct v1; simpl in *; [|apply IHn]; lia.
-Qed.
-
-Lemma assign_app_lt :
-  forall n k v1 v2, (n < length v1)%nat -> assign n k (v1 ++ v2) = assign n k v1 ++ v2.
-Proof.
-  intros n k v1 v2 H. unfold assign.
-  rewrite <- app_assoc. rewrite skipn_app_ge by lia. rewrite resize_app_ge by lia.
-  reflexivity.
-Qed.
-
-Lemma assign_app_ge :
-  forall n k v1 v2, (length v1 <= n)%nat -> assign n k (v1 ++ v2) = v1 ++ assign (n - length v1) k v2.
-Proof.
-  intros n k v1 v2 H. unfold assign.
-  rewrite resize_app_le by lia. rewrite skipn_app_le by lia. rewrite <- app_assoc.
-  f_equal. f_equal. f_equal. f_equal. lia.
-Qed.
-
-Lemma resize_length_eq :
-  forall n l, length l = n -> resize n l = l.
-Proof.
-  induction n; intros; destruct l; simpl in *; auto; lia.
-Qed.
-
-Fixpoint nrlength l :=
-  match l with
-  | nil => 0%nat
-  | x :: l => let n := nrlength l in if (x =? 0) && (n =? 0)%nat then 0%nat else S n
-  end.
-
-Lemma nrlength_zero_null :
-  forall l, nrlength l = 0%nat -> is_null l = true.
-Proof.
-  induction l.
-  - simpl in *; auto.
-  - intros H; simpl in *.
-    destruct (a =? 0); simpl in *; [|congruence].
-    destruct (nrlength l); simpl in *; [auto|congruence].
-Qed.
-
-Lemma nrlength_null_zero :
-  forall l, is_null l = true -> nrlength l = 0%nat.
-Proof.
-  induction l.
-  - simpl; auto.
-  - intros H; simpl in *; reflect; destruct H as [H1 H2]; rewrite IHl by auto; rewrite H1; reflexivity.
-Qed.
-
-Lemma nrlength_zero_null_iff :
-  forall l, nrlength l = 0%nat <-> is_null l = true.
-Proof.
-  intros l; split; [apply nrlength_zero_null | apply nrlength_null_zero].
-Qed.
-
-Lemma nrlength_def :
-  forall l n, resize n l =v= l <-> (nrlength l <= n)%nat.
-Proof.
-  induction l.
-  - intros n; simpl in *. split; intros; [lia|].
-    rewrite <- is_eq_veq. rewrite is_eq_nil_right. apply resize_nil_null.
-  - intros n. rewrite <- is_eq_veq. destruct n.
-    + simpl in *. destruct (a =? 0); simpl; [|split; intros; [congruence|lia]].
-      rewrite <- nrlength_zero_null_iff.
-      destruct (nrlength l); simpl in *; split; intros; lia.
-    + simpl. rewrite Z.eqb_refl. simpl. rewrite is_eq_veq. rewrite IHl.
-      destruct_if_g H; reflect; lia.
-Qed.
-
-Lemma nrlength_eq :
-  forall l, resize (nrlength l) l =v= l.
-Proof.
-  intros; rewrite nrlength_def; lia.
-Qed.
-
-Lemma nrlength_def_impl :
-  forall l n, (nrlength l <= n)%nat -> resize n l =v= l.
-Proof.
-  intros; rewrite nrlength_def; auto.
-Qed.
-
-Lemma dot_product_nrlength_right :
-  forall v1 v2 n, (nrlength v1 <= n)%nat -> dot_product v1 (resize n v2) = dot_product v1 v2.
-Proof.
-  intros v1 v2 n H. rewrite <- (nrlength_def_impl v1 n) by auto.
-  rewrite <- dot_product_resize_right with (t2 := v2). rewrite resize_length. reflexivity.
-Qed.
-
-Lemma dot_product_nrlength_left :
-  forall v1 v2 n, (nrlength v2 <= n)%nat -> dot_product (resize n v1) v2 = dot_product v1 v2.
-Proof.
-  intros v1 v2 n H. rewrite dot_product_commutative. rewrite dot_product_nrlength_right by auto.
-  apply dot_product_commutative.
-Qed.
-
-Lemma satisfies_constraint_nrlength :
-  forall p c n, (nrlength (fst c) <= n)%nat -> satisfies_constraint (resize n p) c = satisfies_constraint p c.
-Proof.
-  intros p c n H. unfold satisfies_constraint.
-  rewrite dot_product_nrlength_left; auto.
-Qed.
-
-Definition poly_nrl (pol : polyhedron) := list_max (map (fun c => nrlength (fst c)) pol).
-
-Lemma in_poly_nrlength :
-  forall p pol n, (poly_nrl pol <= n)%nat -> in_poly (resize n p) pol = in_poly p pol.
-Proof.
-  intros p pol n H.
-  unfold in_poly. rewrite eq_iff_eq_true, !forallb_forall. apply forall_ext.
-  intros c.
-  enough (In c pol -> satisfies_constraint (resize n p) c = satisfies_constraint p c) by (intuition congruence).
-  intros Hin. apply satisfies_constraint_nrlength.
-  eapply list_max_le; [exact H|]. rewrite in_map_iff. exists c. auto.
-Qed.
-
-Lemma nrlength_mult :
-  forall k v, k <> 0 -> nrlength (mult_vector k v) = nrlength v.
-Proof.
-  intros k. induction v.
-  - simpl; auto.
-  - intros; simpl. rewrite IHv by auto.
-    replace (k * a =? 0) with (a =? 0); [reflexivity|].
-    rewrite eq_iff_eq_true; reflect; nia.
-Qed.
-
-Lemma expand_poly_nrl :
-  forall k p, k <> 0 -> poly_nrl (expand_poly k p) = poly_nrl p.
-Proof.
-  intros k p H. unfold poly_nrl, expand_poly.
-  rewrite map_map. f_equal.
-Qed.
-
-Lemma poly_nrl_def :
-  forall n pol, (forall c, In c pol -> fst c =v= resize n (fst c)) <-> (poly_nrl pol <= n)%nat.
-Proof.
-  intros n pol. unfold poly_nrl. rewrite list_max_def. split.
-  - intros H x Hin. rewrite in_map_iff in Hin. destruct Hin as [c [Hlen Hin]].
-    rewrite <- Hlen, <- nrlength_def. symmetry; auto.
-  - intros H c Hin. symmetry; rewrite nrlength_def. apply H.
-    rewrite in_map_iff; exists c; auto.
-Qed.
-
-Lemma nth_resize :
-  forall n k v, nth k (resize n v) 0 = if (k <? n)%nat then nth k v 0 else 0.
-Proof.
-  induction n.
-  - intros k v; destruct k; auto.
-  - intros k v; destruct k; destruct v; simpl; auto;
-      replace (S k <? S n)%nat with (k <? n)%nat by (rewrite eq_iff_eq_true; reflect; lia); rewrite IHn; destruct k; reflexivity.
-Qed.
-
-Lemma expand_poly_app :
-  forall s p1 p2, expand_poly s (p1 ++ p2) = expand_poly s p1 ++ expand_poly s p2.
-Proof.
-  intros s p1 p2. unfold expand_poly. rewrite map_app. reflexivity.
-Qed.
-
-Lemma in_poly_app :
-  forall p pol1 pol2, in_poly p (pol1 ++ pol2) = in_poly p pol1 && in_poly p pol2.
-Proof.
-  intros p pol1 pol2. unfold in_poly. rewrite forallb_app. reflexivity.
-Qed.
-
-Lemma add_vector_nth :
-  forall n v1 v2, nth n (add_vector v1 v2) 0 = nth n v1 0 + nth n v2 0.
-Proof.
-  induction n.
-  - intros; destruct v1; destruct v2; simpl; lia.
-  - intros; destruct v1; destruct v2; simpl; try (rewrite IHn); lia.
-Qed.
-
-Lemma flatten_In :
-  forall (A : Type) (x : A) l, In x (flatten l) <-> exists u, In x u /\ In u l.
-Proof.
-  intros A x l. induction l.
-  - simpl; firstorder.
-  - simpl. rewrite in_app_iff.
-    split.
-    + intros [H | H]; [exists a; auto|]. rewrite IHl in H; destruct H as [u Hu]; exists u; tauto.
-    + intros [u [Hxu [Hau | Hul]]]; [left; congruence|]. right; rewrite IHl; exists u; tauto.
-Qed.
 
 Module FourierMotzkinProject (Import Imp: FullImpureMonad) <: ProjectOperator Imp.
 
@@ -1430,6 +979,7 @@ Module PolyProjectImpl (Import Imp: FullImpureMonad) (Canon : PolyCanonizer Imp)
 
 End PolyProjectImpl.
 
+Module CoreAlarmed := AlarmImpureMonad Vpl.ImpureConfig.Core.
 Import CoreAlarmed.
 
 (*
