@@ -723,16 +723,15 @@ Proof.
   intros; reflexivity.
 Qed.
 
+Arguments Z.mul : simpl nomatch.
+
 Theorem get_econstraint_Q_correct :
   forall cmp lin q v t, QNum.cmpDenote (cmpT2G cmp) (ZtoQ.ofZ (dot_product v lin)) (QNum.mul (ZtoQ.ofZ t) q) <->
                    satisfies_extended cmp v (mult_constraint_cst t (get_econstraint_Q lin q)) = true.
 Proof.
   intros cmp lin q v t. unfold get_econstraint_Q.
   destruct cmp; simpl; reflect; rewrite dot_product_mult_right;
-    [rewrite QNum_this_eq_equiv | rewrite QNum_this_le_iff | rewrite QNum_this_lt_iff]; rewrite QNum_mul_this, !ZtoQ_ofZ_this; unfold inject_Z, "=="%Q, "<="%Q, "<"%Q.
-  - Opaque Zmult. simpl. Transparent Zmult. nia.
-  - Opaque Zmult. simpl. Transparent Zmult. nia.
-  - Opaque Zmult. simpl. Transparent Zmult. nia.
+    [rewrite QNum_this_eq_equiv | rewrite QNum_this_le_iff | rewrite QNum_this_lt_iff]; rewrite QNum_mul_this, !ZtoQ_ofZ_this; unfold inject_Z, "=="%Q, "<="%Q, "<"%Q; simpl; nia.
 Qed.
 
 Definition Cstr_to_econstraint c :=
