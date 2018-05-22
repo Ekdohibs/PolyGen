@@ -646,6 +646,9 @@ Definition get_econstraint cmp lin (q : QNum.t) :=
   | LtT => (LtT, (lin, ZtoQ.ceil q))
   end.
 
+Definition get_econstraint_Q lin (q : QNum.t) :=
+  (mult_vector (Zpos q.(this).(Qden)) lin, q.(this).(Qnum)).
+
 Lemma floor_le_exact :
   forall q x, QNum.Le (ZtoQ.ofZ x) q <-> x <= ZtoQ.floor q.
 Proof.
@@ -678,9 +681,67 @@ Proof.
   - simpl. reflect. apply ceil_lt_exact.
 Qed.
 
+Lemma QNum_this_eq_equiv :
+  forall (q1 q2 : QNum.t), q1 = q2 <-> q1.(this) == q2.(this).
+Proof.
+  intros q1 q2. rewrite <- Q2Qc_eq_iff, !Qop.QOp.Q2Qc_this_eq. reflexivity.
+Qed.
+
+Lemma this_Q2Qc_equiv :
+  forall (q : Q), (Q2Qc q).(this) == q.
+Proof.
+  intros q. apply Qred_correct. 
+Qed.
+
+Lemma QNum_mul_this :
+  forall (q1 q2 : QNum.t), (QNum.mul q1 q2).(this) == (q1.(this) * q2.(this))%Q.
+Proof.
+  intros q1 q2. apply this_Q2Qc_equiv.
+Qed.
+
+Lemma QNum_add_this :
+  forall (q1 q2 : QNum.t), (QNum.add q1 q2).(this) == (q1.(this) + q2.(this))%Q.
+Proof.
+  intros q1 q2. apply this_Q2Qc_equiv.
+Qed.
+
+Lemma QNum_this_le_iff :
+  forall (q1 q2 : QNum.t), QNum.Le q1 q2 <-> (q1.(this) <= q2.(this))%Q.
+Proof.
+  intros q1 q2. reflexivity.
+Qed.
+
+Lemma QNum_this_lt_iff :
+  forall (q1 q2 : QNum.t), QNum.Lt q1 q2 <-> (q1.(this) < q2.(this))%Q.
+Proof.
+  intros q1 q2. reflexivity.
+Qed.
+
+Lemma ZtoQ_ofZ_this :
+  forall (x : Z), (ZtoQ.ofZ x).(this) = inject_Z x.
+Proof.
+  intros; reflexivity.
+Qed.
+
+Theorem get_econstraint_Q_correct :
+  forall cmp lin q v t, QNum.cmpDenote (cmpT2G cmp) (ZtoQ.ofZ (dot_product v lin)) (QNum.mul (ZtoQ.ofZ t) q) <->
+                   satisfies_extended cmp v (mult_constraint_cst t (get_econstraint_Q lin q)) = true.
+Proof.
+  intros cmp lin q v t. unfold get_econstraint_Q.
+  destruct cmp; simpl; reflect; rewrite dot_product_mult_right;
+    [rewrite QNum_this_eq_equiv | rewrite QNum_this_le_iff | rewrite QNum_this_lt_iff]; rewrite QNum_mul_this, !ZtoQ_ofZ_this; unfold inject_Z, "=="%Q, "<="%Q, "<"%Q.
+  - Opaque Zmult. simpl. Transparent Zmult. nia.
+  - Opaque Zmult. simpl. Transparent Zmult. nia.
+  - Opaque Zmult. simpl. Transparent Zmult. nia.
+Qed.
+
 Definition Cstr_to_econstraint c :=
   let w := LinQ_to_vector (Cstr.coefs c) in
   get_econstraint (Cstr.typ c) (snd w) (QNum.mul (ZtoQ.ofZ (fst w)) (Cstr.cst c)).
+
+Definition Cstr_to_econstraint_Q c :=
+  let w := LinQ_to_vector (Cstr.coefs c) in
+  get_econstraint_Q (snd w) (QNum.mul (ZtoQ.ofZ (fst w)) (Cstr.cst c)).
 
 Lemma Qnum_mul_eq :
   forall k x y, ~ (k = QNum.z) -> QNum.mul k x = QNum.mul k y -> x = y.
@@ -718,6 +779,17 @@ Proof.
   rewrite <- ZtoQ.ofZ_zero, <- ZtoQ.LtCommutes.
   apply LinQ_to_vector_positive_multiple.
 Qed.
+
+Lemma Cstr_to_econstraint_Q_correct :
+  forall c v t, Cstr.sat c (vector_to_memQ v) <-> satisfies_extended (Cstr.typ c) v (Cstr_to_econstraint_Q c) = true.
+Proof.
+  intros c v. unfold Cstr_to_econstraint_Q.
+  rewrite <- get_econstraint_Q_correct, dot_product_commutative, LinQ_to_vector_correct.
+  rewrite cmpDenote_mul; [reflexivity|].
+  rewrite <- ZtoQ.ofZ_zero, <- ZtoQ.LtCommutes.
+  apply LinQ_to_vector_positive_multiple.
+Qed.
+
 
 Definition Cstr_to_constraints c :=
   let ec := Cstr_to_econstraint c in
