@@ -193,6 +193,59 @@ Proof.
   rewrite <- ZtoQ.LeCommutes. reflexivity.
 Qed.
 
+Lemma absEval_mul :
+  forall l f t, LinQ.absEval l (fun x => QNum.mul t (f x)) = QNum.mul t (LinQ.absEval l f).
+Proof.
+  induction l.
+  - intros; simpl; rewrite QNum.MulComm; symmetry; apply QNum.MulZL.
+  - intros; simpl; rewrite IHl, <- QNum.MulAssoc, !(QNum.MulComm t), <- QNum.MulAddDistr.
+    reflexivity.
+Qed.
+
+Lemma linQ_mul :
+  forall l f t, LinQ.eval l (fun x => QNum.mul t (f x)) = QNum.mul t (LinQ.eval l f).
+Proof.
+  intros l f t.
+  unfold LinQ.eval. apply absEval_mul.
+Qed.
+
+Lemma QNumMulLe3 :
+  forall n1 n2 n3 : QNum.t, QNum.Lt QNum.z n1 -> QNum.Le (QNum.mul n1 n2) (QNum.mul n1 n3) <-> QNum.Le n2 n3.
+Proof.
+  intros n1 n2 n3. split.
+  - apply QNum.MulLe2; auto.
+  - apply QNum.MulLe1. apply QNum.LtLe; auto.
+Qed.
+
+Lemma Qnum_mul_inv :
+  forall x t, t <> QNum.z -> QNum.mul t (QNum.mul (QNum.inv t) x) = x.
+Proof.
+  intros. unfold QNum.mul, QNum.inv.
+  rewrite Qcmult_comm with (y := x). replace (t * (x * / t))%Qc with (t * (x / t))%Qc by reflexivity.
+  rewrite Qcmult_div_r; auto.
+Qed.
+
+Lemma Qnum_inv_mul :
+  forall x t, t <> QNum.z -> QNum.mul (QNum.inv t) (QNum.mul t x) = x.
+Proof.
+  intros. unfold QNum.mul, QNum.inv.
+  rewrite Qcmult_comm with (y := (t * x)%Qc). rewrite <- Qcmult_assoc. replace (t * (x * / t))%Qc with (t * (x / t))%Qc by reflexivity.
+  rewrite Qcmult_div_r; auto.
+Qed.
+
+Lemma constraint_to_Cstr_correct_Q :
+  forall c v t, 0 < t -> Cstr.sat (constraint_to_Cstr c) (fun x => QNum.mul (QNum.inv (ZtoQ.ofZ t)) (vector_to_memQ v x)) <->
+                                                          (satisfies_constraint v (mult_constraint_cst t c) = true).
+Proof.
+  intros c v t Ht.
+  unfold constraint_to_Cstr, Cstr.upperOrEqualsToCstr, Cstr.sat; simpl.
+  rewrite linQ_mul, vector_to_LinQ_correct. unfold satisfies_constraint, mult_constraint_cst; simpl; reflect.
+  rewrite dot_product_commutative.
+  rewrite <- Qnum_inv_mul with (t := ZtoQ.ofZ t) (x := ZtoQ.ofZ (snd c)) by (rewrite <- ZtoQ.ofZ_zero, <- ZtoQ.EqCommutes; unfold ZNum.z; lia).
+  rewrite QNumMulLe3 by (destruct t; try lia; unfold QNum.Lt, QNum.z, QNum.inv, Qcinv, ZtoQ.ofZ, inject_Z, Qclt, Qinv, Qlt; simpl; lia).
+  rewrite <- ZtoQ.MulCommutes, <- ZtoQ.LeCommutes. reflexivity.
+Qed.
+
 Definition poly_to_Cs p := map constraint_to_Cstr p.
 
 Lemma poly_to_Cs_correct :
@@ -201,6 +254,15 @@ Proof.
   induction p.
   - intros v; simpl; split; auto.
   - intros v; simpl. rewrite constraint_to_Cstr_correct. rewrite IHp. reflect.
+    tauto.
+Qed.
+
+Lemma poly_to_Cs_correct_Q :
+  forall p v t, 0 < t -> Cs.sat (poly_to_Cs p) (fun x => QNum.mul (QNum.inv (ZtoQ.ofZ t)) (vector_to_memQ v x)) <-> (in_poly v (expand_poly t p) = true).
+Proof.
+  induction p.
+  - intros v t Ht; simpl; split; auto.
+  - intros v t Ht; simpl. rewrite constraint_to_Cstr_correct_Q by auto. rewrite IHp by auto. reflect.
     tauto.
 Qed.
 
@@ -639,6 +701,17 @@ Proof.
     reflect. lia.
 Qed.
 
+
+Definition econstraint_to_constraints_correct_Q :
+  forall cmp c v t, cmp <> LtT -> satisfies_extended cmp v (mult_constraint_cst t c) = forallb (satisfies_constraint v) (map (mult_constraint_cst t) (econstraint_to_constraints cmp c)).
+Proof.
+  intros cmp c v t Hcmp. destruct cmp.
+  - simpl. unfold satisfies_constraint. simpl. rewrite dot_product_mult_right.
+    rewrite eq_iff_eq_true. reflect. intuition; lia.
+  - simpl. unfold satisfies_constraint. rewrite andb_true_r. reflexivity.
+  - congruence.
+Qed.
+
 Definition get_econstraint cmp lin (q : QNum.t) :=
   match cmp with
   | EqT => if (q.(this).(Qden) =? 1)%positive then (EqT, (lin, q.(this).(Qnum))) else (LeT, (@nil Z, -1))
@@ -780,19 +853,25 @@ Proof.
 Qed.
 
 Lemma Cstr_to_econstraint_Q_correct :
-  forall c v t, Cstr.sat c (vector_to_memQ v) <-> satisfies_extended (Cstr.typ c) v (Cstr_to_econstraint_Q c) = true.
+  forall c v t, 0 < t -> Cstr.sat c (fun x => QNum.mul (QNum.inv (ZtoQ.ofZ t)) (vector_to_memQ v x)) <-> satisfies_extended (Cstr.typ c) v (mult_constraint_cst t (Cstr_to_econstraint_Q c)) = true.
 Proof.
-  intros c v. unfold Cstr_to_econstraint_Q.
+  intros c v t Ht. unfold Cstr_to_econstraint_Q.
   rewrite <- get_econstraint_Q_correct, dot_product_commutative, LinQ_to_vector_correct.
-  rewrite cmpDenote_mul; [reflexivity|].
-  rewrite <- ZtoQ.ofZ_zero, <- ZtoQ.LtCommutes.
-  apply LinQ_to_vector_positive_multiple.
+  unfold Cstr.sat. rewrite linQ_mul.
+  rewrite QNum.MulAssoc, (QNum.MulComm (ZtoQ.ofZ t)), <- QNum.MulAssoc. Search QNum.mul.
+  rewrite cmpDenote_mul by (rewrite <- ZtoQ.ofZ_zero, <- ZtoQ.LtCommutes; apply LinQ_to_vector_positive_multiple).
+  rewrite <- Qnum_mul_inv with (t := ZtoQ.ofZ t) (x := LinQ.eval _ _) at 2 by (rewrite <- ZtoQ.ofZ_zero, <- ZtoQ.EqCommutes; unfold ZNum.z; lia).
+  rewrite cmpDenote_mul by (rewrite <- ZtoQ.ofZ_zero, <- ZtoQ.LtCommutes; auto).
+  reflexivity.
 Qed.
-
 
 Definition Cstr_to_constraints c :=
   let ec := Cstr_to_econstraint c in
   econstraint_to_constraints (fst ec) (snd ec).
+
+Definition Cstr_to_constraints_Q c :=
+  let ec := Cstr_to_econstraint_Q c in
+  econstraint_to_constraints (Cstr.typ c) ec.
 
 Lemma Cstr_to_constraints_correct :
   forall c v, Cstr.sat c (vector_to_memQ v) <-> forallb (satisfies_constraint v) (Cstr_to_constraints c) = true.
@@ -801,7 +880,19 @@ Proof.
   rewrite Cstr_to_econstraint_correct. rewrite econstraint_to_constraints_correct. reflexivity.
 Qed.
 
+Lemma Cstr_to_constraints_correct_Q :
+  forall c v t, Cstr.typ c <> LtT -> 0 < t -> Cstr.sat c (fun x => QNum.mul (QNum.inv (ZtoQ.ofZ t)) (vector_to_memQ v x)) <-> forallb (satisfies_constraint v) (map (mult_constraint_cst t) (Cstr_to_constraints_Q c)) = true.
+Proof.
+  intros c v t Hcmp Ht. unfold Cstr_to_constraints.
+  rewrite Cstr_to_econstraint_Q_correct, econstraint_to_constraints_correct_Q by auto. reflexivity.
+Qed.
+
 Definition Cs_to_poly p := flatten (map Cstr_to_constraints p).
+Definition Cs_to_poly_Q p :=
+  if forallb (fun c => match Cstr.typ c with LtT => false | _ => true end) p then
+    Some (flatten (map Cstr_to_constraints_Q p))
+  else
+    None.
 
 Lemma Cs_to_poly_correct :
   forall p v, Cs.sat p (vector_to_memQ v) <-> (in_poly v (Cs_to_poly p) = true).
@@ -810,4 +901,19 @@ Proof.
   - intros v; simpl; split; auto.
   - intros v; simpl. rewrite Cstr_to_constraints_correct. rewrite IHp. unfold Cs_to_poly. simpl. unfold in_poly.
     rewrite forallb_app. reflect. reflexivity.
+Qed.
+
+Lemma Cs_to_poly_Q_correct :
+  forall p v r t, 0 < t -> Cs_to_poly_Q p = Some r ->
+             Cs.sat p (fun x => QNum.mul (QNum.inv (ZtoQ.ofZ t)) (vector_to_memQ v x)) <-> (in_poly v (expand_poly t r) = true).
+Proof.
+  induction p.
+  - intros v r t Ht Hr; simpl; split; [|auto].
+    unfold Cs_to_poly_Q in Hr; case_if in Hr; [|congruence]; injection Hr as Hr; rewrite <- Hr; auto.
+  - intros v r t Ht Hr; simpl in *.
+    unfold Cs_to_poly_Q in Hr. case_if in Hr eq H; [|congruence]. simpl in H; rewrite andb_true_iff in H; destruct H as [H1 H2].
+    injection Hr as Hr; rewrite <- Hr. rewrite expand_poly_app, in_poly_app, andb_true_iff.
+    rewrite Cstr_to_constraints_correct_Q by (auto || destruct (Cstr.typ a); congruence).
+    f_equiv.
+    rewrite <- IHp; [reflexivity|auto|unfold Cs_to_poly_Q; rewrite H2; reflexivity].
 Qed.
