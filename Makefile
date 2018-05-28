@@ -11,6 +11,10 @@ FILES=Linalg.v Loop.v PolyLang.v CodeGen.v Instr.v Misc.v VplInterface.v Result.
 
 proof: $(FILES:.v=.vo)
 
+Extraction.vo: $(FILES:.v=.vo) Extraction.v
+	$(COQC) Extraction.v
+	rm extraction/ImpureConfig.mli
+
 %.vo: %.v
 	@rm -f doc/$(*F).glob
 	@echo "COQC $*.v"
@@ -25,5 +29,12 @@ documentation: $(FILES)
 	@$(COQDEP) $^ > .depend
 
 all: proof documentation
+
+extract: Extraction.vo
+
+ocaml: extract
+	cp test_extract.ml extraction/
+	$(MAKE) -C extraction .depend
+	$(MAKE) -C extraction
 
 -include .depend

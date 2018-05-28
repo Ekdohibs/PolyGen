@@ -50,7 +50,7 @@ Axiom split_poly_eq :
 Fixpoint make_linear_expr (n : nat) (l : list Z) :=
   match n, l with
   | O, _ | _, nil => Constant 0
-  | S n, x :: l => Sum (Mult x (Var n)) (make_linear_expr n l)
+  | S n, x :: l => make_sum (make_mult x (Var n)) (make_linear_expr n l)
   end.
 
 Theorem make_linear_expr_correct_aux :
@@ -62,7 +62,7 @@ Proof.
     destruct l as [|x l]; simpl in Hel; destruct (rev (firstn (S n) env)) as [|y ev] eqn:Hrev; auto; simpl; auto.
     + destruct env as [|e env]; simpl in *; [lia | destruct (rev (firstn n env)); simpl in *; congruence].
     + rewrite firstn_nth_app with (d := 0) in Hrev by auto. rewrite rev_unit in Hrev.
-      injection Hrev as Hnth Hrev. rewrite IHn by lia. congruence.
+      injection Hrev as Hnth Hrev. rewrite make_sum_correct, make_mult_correct, IHn by lia; simpl. congruence.
 Qed.
 
 Theorem make_linear_expr_correct :
@@ -71,26 +71,25 @@ Proof.
   intros. rewrite make_linear_expr_correct_aux by lia. f_equal. f_equal. apply firstn_all2. lia.
 Qed.
 
-Definition make_affine_expr (n : nat) (e : (list Z * Z)%type) := Sum (make_linear_expr n (fst e)) (Constant (snd e)).
+Definition make_affine_expr (n : nat) (e : (list Z * Z)%type) := make_sum (make_linear_expr n (fst e)) (Constant (snd e)).
 
 Theorem make_affine_expr_correct :
   forall n e env, length env = n -> eval_expr env (make_affine_expr n e) = dot_product (fst e) (rev env) + snd e.
 Proof.
-  intros. simpl in *. rewrite make_linear_expr_correct; auto.
+  intros. unfold make_affine_expr. rewrite make_sum_correct, make_linear_expr_correct; auto.
 Qed.
 
 (** * Creating upper and lower bounds for a given variable in a constraint *)
 
 Definition make_lower_bound n c :=
-  Div (Sum (Constant ((- nth n (fst c) 0) - 1)) (make_affine_expr n (fst c, -(snd c)))) (-(nth n (fst c) 0)).
+  make_div (make_sum (Constant ((- nth n (fst c) 0) - 1)) (make_affine_expr n (fst c, -(snd c)))) (-(nth n (fst c) 0)).
 
 Lemma make_lower_bound_correct :
   forall n c env x, length env = n -> nth n (fst c) 0 < 0 -> (eval_expr env (make_lower_bound n c) <= x <-> satisfies_constraint (rev env ++ x :: nil) c = true).
 Proof.
   intros n c env x Hlen Hneg.
   unfold satisfies_constraint. simpl.
-  reflect.
-  rewrite make_linear_expr_correct by auto.
+  reflect. unfold make_lower_bound; rewrite make_div_correct, make_sum_correct, make_affine_expr_correct by auto. simpl.
   rewrite dot_product_app_left, dot_product_resize_right, dot_product_commutative.
   rewrite rev_length, Hlen.
   replace (dot_product (x :: nil) (skipn n (fst c))) with (x * nth n (fst c) 0) at 1;
@@ -103,15 +102,15 @@ Proof.
 Qed.
 
 Definition make_upper_bound n c :=
-  Div (Sum (Constant (nth n (fst c) 0)) (make_affine_expr n (mult_vector (-1) (fst c), snd c))) (nth n (fst c) 0).
+  make_div (make_sum (Constant (nth n (fst c) 0)) (make_affine_expr n (mult_vector (-1) (fst c), snd c))) (nth n (fst c) 0).
 
 Lemma make_upper_bound_correct :
   forall n c env x, length env = n -> 0 < nth n (fst c) 0 -> (x < eval_expr env (make_upper_bound n c) <-> satisfies_constraint (rev env ++ x :: nil) c = true).
 Proof.
   intros n c env x Hlen Hpos.
   unfold satisfies_constraint. simpl.
-  reflect.
-  rewrite make_linear_expr_correct by auto. rewrite dot_product_mult_left.
+  reflect. unfold make_upper_bound; rewrite make_div_correct, make_sum_correct, make_affine_expr_correct by auto. simpl.
+  rewrite dot_product_mult_left.
   rewrite dot_product_app_left, dot_product_resize_right, dot_product_commutative.
   rewrite rev_length, Hlen.
   replace (dot_product (x :: nil) (skipn n (fst c))) with (x * nth n (fst c) 0) at 1;
@@ -1182,23 +1181,23 @@ Qed.
 
 Fixpoint and_all l :=
   match l with
-  | nil => EQ (Constant 0) (Constant 0)
-  | x :: l => And x (and_all l)
+  | nil => TConstantTest true
+  | x :: l => make_and x (and_all l)
   end.
 
 Theorem and_all_correct :
   forall l env, eval_test env (and_all l) = forallb (eval_test env) l.
 Proof.
   induction l; simpl in *; [auto|].
-  intros; rewrite IHl; auto.
+  intros; rewrite make_and_correct, IHl; auto.
 Qed.
 
-Definition make_affine_test n c := LE (make_linear_expr n (fst c)) (Constant (snd c)).
+Definition make_affine_test n c := make_le (make_linear_expr n (fst c)) (Constant (snd c)).
 
 Lemma make_affine_test_correct :
   forall env n c, length env = n -> eval_test env (make_affine_test n c) = satisfies_constraint (rev env) c.
 Proof.
-  intros. simpl in *. rewrite make_linear_expr_correct; auto.
+  intros. simpl in *. unfold make_affine_test. rewrite make_le_correct, make_linear_expr_correct; auto.
   rewrite dot_product_commutative. reflexivity.
 Qed.
 
@@ -1272,16 +1271,4 @@ Theorem generate_preserves_sem :
     env_poly_lex_semantics 
  *)
 
-(*
-Import ListNotations.
-Axiom dummy : instr.
-Definition test_pi := {|
-   pi_instr := dummy ;
-   pi_poly := [ ([0; 0; -1; 0], 0); ([0; 0; 0; -1], 0); ([-1; 0; 1; 0], 0); ([0; -1; 0; 1], 0) ] ;
-   pi_schedule := [([0; 0; 0; 1], 0); ([0; 0; 1; 0], 0)] ;
-   pi_transformation := [([0; 0; 1; 0], 0); ([0; 0; 0; 1], 0)] ;
-|}.
 
-Definition test_pi_lex := pi_elim_schedule 2%nat 2%nat test_pi.
-Eval cbv in test_pi_lex.
- *)

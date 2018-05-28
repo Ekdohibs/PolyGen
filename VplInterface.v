@@ -858,7 +858,7 @@ Proof.
   intros c v t Ht. unfold Cstr_to_econstraint_Q.
   rewrite <- get_econstraint_Q_correct, dot_product_commutative, LinQ_to_vector_correct.
   unfold Cstr.sat. rewrite linQ_mul.
-  rewrite QNum.MulAssoc, (QNum.MulComm (ZtoQ.ofZ t)), <- QNum.MulAssoc. Search QNum.mul.
+  rewrite QNum.MulAssoc, (QNum.MulComm (ZtoQ.ofZ t)), <- QNum.MulAssoc.
   rewrite cmpDenote_mul by (rewrite <- ZtoQ.ofZ_zero, <- ZtoQ.LtCommutes; apply LinQ_to_vector_positive_multiple).
   rewrite <- Qnum_mul_inv with (t := ZtoQ.ofZ t) (x := LinQ.eval _ _) at 2 by (rewrite <- ZtoQ.ofZ_zero, <- ZtoQ.EqCommutes; unfold ZNum.z; lia).
   rewrite cmpDenote_mul by (rewrite <- ZtoQ.ofZ_zero, <- ZtoQ.LtCommutes; auto).
