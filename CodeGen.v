@@ -1012,15 +1012,18 @@ Proof.
   - intros H. apply mayReturn_alarm in H. tauto.
 Qed.
 
+Definition scan_dimension (n : nat) (inner : stmt) (p : polyhedron) : imp stmt :=
+  BIND lb <- res_to_alarm (Constant 0) (find_lower_bound n p) -;
+  BIND ub <- res_to_alarm (Constant 0) (find_upper_bound n p) -;
+  pure (Loop lb ub inner).
+
 Fixpoint generate_loop (d : nat) (n : nat) (pi : Polyhedral_Instruction) : imp stmt :=
   match d with
   | O => pure (Instr pi.(pi_instr) (map (make_affine_expr n) pi.(pi_transformation)))
   | S d1 =>
     BIND proj <- project ((n - d1)%nat, pi.(pi_poly)) -;
-    BIND lb <- res_to_alarm (Constant 0) (find_lower_bound (n - d)%nat proj) -;
-    BIND ub <- res_to_alarm (Constant 0) (find_upper_bound (n - d)%nat proj) -;
     BIND inner <- generate_loop d1 n pi -;
-    pure (Loop lb ub inner)
+    scan_dimension (n - d)%nat inner proj
   end.
 
 Lemma env_scan_begin :
@@ -1103,12 +1106,11 @@ Lemma env_scan_extend :
     length env = n ->
     (n < d)%nat ->
     WHEN proj <- project (S n, pi.(pi_poly)) THEN
-    find_lower_bound n proj = Ok lb ->
-    find_upper_bound n proj = Ok ub ->
+    (forall x, (forall c, In c proj -> nth n (fst c) 0 <> 0 -> satisfies_constraint (rev (x :: env)) c = true) <-> lb <= x < ub) ->
     env_scan (pi :: nil) (rev env) d m p =
-      existsb (fun x : Z => env_scan (pi :: nil) (rev env ++ x :: nil) d m p) (Zrange (eval_expr env lb) (eval_expr env ub)).
+      existsb (fun x : Z => env_scan (pi :: nil) (rev env ++ x :: nil) d m p) (Zrange lb ub).
 Proof.
-  intros d n pi lb ub env m p Hlen Hnd proj Hproj Hlb Hub.
+  intros d n pi lb ub env m p Hlen Hnd proj Hproj Hlbub.
   rewrite eq_iff_eq_true. rewrite existsb_exists.
   rewrite env_scan_split by (rewrite rev_length; lia).
   split.
@@ -1122,10 +1124,59 @@ Proof.
       rewrite app_length; rewrite rev_length; rewrite Hlen; unfold length.
       replace (n + 1)%nat with (S n) by lia. apply Hproj.
     }
-    rewrite find_bounds_correct by eauto.
+    rewrite <- Hlbub by eauto.
     unfold in_poly in Hinproj. rewrite forallb_forall in Hinproj.
     intros; auto.
   - intros [x [H1 H2]]; exists x; assumption.
+Qed.
+
+Lemma scan_dimension_sem :
+  forall n inner pol,
+    WHEN st <- scan_dimension n inner pol THEN
+         forall env mem1 mem2,
+           length env = n ->
+           exists lb ub,
+             (loop_semantics st env mem1 mem2 <-> iter_semantics (fun x => loop_semantics inner (x :: env)) lb ub mem1 mem2) /\
+             (forall x, (forall c, In c pol -> nth n (fst c) 0 <> 0 -> satisfies_constraint (rev (x :: env)) c = true) <-> lb <= x < ub).
+Proof.
+  intros n inner pol st Hst env mem1 mem2 Henvlen.
+  unfold scan_dimension in Hst.
+  bind_imp_destruct Hst lb Hlb. apply res_to_alarm_correct in Hlb.
+  bind_imp_destruct Hst ub Hub. apply res_to_alarm_correct in Hub.
+  exists (eval_expr env lb). exists (eval_expr env ub).
+  apply mayReturn_pure in Hst. rewrite <- Hst.
+  split.
+  - split.
+    + intros Hsem; inversion_clear Hsem; auto.
+    + intros Hsem; constructor; auto.
+  - intros x. rewrite find_bounds_correct; try reflexivity; auto.
+Qed.
+
+Lemma env_scan_inj_nth :
+  forall pis env1 env2 n m p s, length env1 = length env2 -> (s < length env1)%nat ->
+                           env_scan pis env1 n m p = true -> env_scan pis env2 n m p = true -> nth s env1 0 = nth s env2 0.
+Proof.
+  intros pis env1 env2 n m p s Hleneq Hs Henv1 Henv2.
+  unfold env_scan in Henv1, Henv2. destruct (nth_error pis m) as [pi|]; [|congruence].
+  reflect. rewrite Hleneq in Henv1. destruct Henv1 as [[Henv1 ?] ?]; destruct Henv2 as [[Henv2 ?] ?].
+  rewrite <- Henv2 in Henv1. apply nth_eq; auto.
+Qed.
+
+Lemma env_scan_inj_rev :
+  forall pis env n m x1 x2 p, env_scan pis (rev (x1 :: env)) n m p = true -> env_scan pis (rev (x2 :: env)) n m p = true -> x1 = x2.
+Proof.
+  intros pis env n m x1 x2 p H1 H2.
+  replace x1 with (nth (length env) (rev (x1 :: env)) 0) by (simpl; rewrite app_nth2, rev_length, Nat.sub_diag; reflexivity || rewrite rev_length; lia).
+  replace x2 with (nth (length env) (rev (x2 :: env)) 0) by (simpl; rewrite app_nth2, rev_length, Nat.sub_diag; reflexivity || rewrite rev_length; lia).
+  eapply env_scan_inj_nth; [| |exact H1|exact H2]; rewrite !rev_length; simpl; lia.
+Qed.
+
+Lemma lex_app_not_gt :
+  forall env x1 x2 l1 l2, lex_compare ((env ++ (x1 :: nil)) ++ l1) ((env ++ (x2 :: nil)) ++ l2) <> Gt -> x1 <= x2.
+Proof.
+  intros env x1 x2 l1 l2 H.
+  rewrite !lex_compare_app, lex_compare_reflexive in H by (rewrite ?app_length; reflexivity).
+  simpl in H. destruct (x1 ?= x2) eqn:H12; simpl; congruence.
 Qed.
 
 Theorem generate_loop_preserves_sem :
@@ -1145,37 +1196,24 @@ Proof.
     rewrite Nat.sub_0_r in Hinv. auto.
   - intros n pi env mem1 mem2 Hnd st Hgen Hsem Hlen Hpilen Hinv. simpl in *.
     bind_imp_destruct Hgen proj Hproj.
-    bind_imp_destruct Hgen lb Hlb. apply res_to_alarm_correct in Hlb.
-    bind_imp_destruct Hgen ub Hub. apply res_to_alarm_correct in Hub.
     bind_imp_destruct Hgen inner Hinner.
-    apply mayReturn_pure in Hgen. rewrite <- Hgen in Hsem.
-    inversion_clear Hsem.
+    apply scan_dimension_sem in Hgen. specialize (Hgen env mem1 mem2 Hlen).
+    destruct Hgen as [lb [ub [Hsemgen Hlbub]]]. rewrite Hsemgen in Hsem.
     unfold env_poly_lex_semantics in *.
     eapply poly_lex_semantics_extensionality.
     + apply poly_lex_concat_seq with (to_scans := fun x => env_scan (pi :: nil) (rev (x :: env)) n).
-      * eapply iter_semantics_map; [|apply H]. simpl.
+      * eapply iter_semantics_map; [|apply Hsem].
         intros x mem3 mem4 Hbounds Hloop. eapply IHd with (env := x :: env); simpl; eauto; try lia.
         replace (n - d)%nat with (S (n - S d))%nat in * by lia.
-        eapply project_next_r_inclusion; [|exact Hproj|].
-        -- rewrite project_invariant_resize. rewrite resize_app by (rewrite rev_length; auto).
-           apply Hinv.
-        -- rewrite <- find_bounds_correct; eauto.
+        eapply project_next_r_inclusion; [|exact Hproj|rewrite (Hlbub x); auto].
+        rewrite project_invariant_resize, resize_app by (rewrite rev_length; auto).
+        apply Hinv.
       * intros x. apply env_scan_proper.
-      * intros x1 x2 m p H1 H2. apply env_scan_begin in H1. apply env_scan_begin in H2.
-        assert (Heq : resize (length (rev (x1 :: env))) p = resize (length (rev (x2 :: env))) p).
-        { simpl. rewrite !app_length; simpl. auto. }
-        rewrite H1 in Heq at 1. rewrite H2 in Heq at 2.
-        rewrite !resize_app in Heq by auto.
-        assert (Heq2: rev (rev (x1 :: env)) = rev (rev (x2 :: env))) by (f_equal; auto).
-        rewrite !rev_involutive in Heq2; congruence.
+      * intros x1 x2 m p. apply env_scan_inj_rev.
       * intros x1 n1 p1 x2 n2 p2 Hcmp H1 H2.
-        apply env_scan_begin in H1; apply env_scan_begin in H2.
-        rewrite H1 in Hcmp; rewrite H2 in Hcmp.
-        rewrite lex_compare_app in Hcmp by (rewrite !rev_length; simpl; auto).
-        simpl in Hcmp. rewrite lex_compare_app in Hcmp by auto.
-        rewrite lex_compare_reflexive in Hcmp. simpl in Hcmp.
-        destruct (x2 ?= x1) eqn:Hcmpx; reflect; [lia | lia | congruence].
-    + simpl. intros m p. erewrite env_scan_extend; eauto; try lia.
+        apply env_scan_begin in H1; apply env_scan_begin in H2. simpl in *.
+        rewrite H1, H2 in Hcmp. eapply lex_app_not_gt; rewrite Hcmp. congruence.
+    + simpl. intros m p. rewrite env_scan_extend; eauto; try lia.
       replace (S (n - S d)) with (n - d)%nat by lia. apply Hproj.
 Qed.
 
