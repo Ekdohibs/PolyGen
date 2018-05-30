@@ -3,3 +3,12 @@
 *.aux
 .depend
 *.cache
+*.annot
+extraction
+ocaml/.depend
+*.cmi
+*.cmx
+*.cmo
+*.cma
+*.cmxa
+*.o
