@@ -67,15 +67,55 @@ Qed.
 Definition make_div e n :=
   match e, n with
   | Constant m, _ => Constant (m / n)
-  | _, 0 => Constant 0
   | e, 1 => e
+  | e, -1 => make_mult (-1) e
   | e, n => Div e n
   end.
 
 Lemma make_div_correct :
   forall env e n, eval_expr env (make_div e n) = eval_expr env e / n.
 Proof.
-  intros env e n; unfold make_div; repeat (destruct_match; simpl); try reflexivity; rewrite ?Zdiv_0_r, ?Z.div_1_r; reflexivity.
+  intros env e n; unfold make_div; repeat (destruct_match; simpl); try reflexivity; rewrite ?Z.div_1_r; try reflexivity;
+    rewrite <- Z.div_opp_opp, Z.div_1_r by lia; reflexivity.
+Qed.
+
+Definition make_mod e n :=
+  match e, n with
+  | Constant m, _ => Constant (m mod n)
+  | e, 1 => Constant 0
+  | e, (-1) => Constant 0
+  | e, n => Mod e n
+  end.
+
+Lemma make_mod_correct :
+  forall env e n, eval_expr env (make_mod e n) = eval_expr env e mod n.
+Proof.
+  intros env e n; unfold make_mod; repeat (destruct_match; simpl); try reflexivity; rewrite ?Z.mod_1_r; try reflexivity;
+    replace (-1) with (-(1)) by reflexivity; rewrite Z.mod_opp_r_z; rewrite ?Z.mod_1_r; lia.
+Qed.
+
+Definition make_max e1 e2 :=
+  match e1, e2 with
+  | Constant m, Constant n => Constant (Z.max m n)
+  | e1, e2 => Max e1 e2
+  end.
+
+Lemma make_max_correct :
+  forall env e1 e2, eval_expr env (make_max e1 e2) = Z.max (eval_expr env e1) (eval_expr env e2).
+Proof.
+  intros env e1 e2; unfold make_max; repeat (destruct_match; simpl); reflexivity.
+Qed.
+
+Definition make_min e1 e2 :=
+  match e1, e2 with
+  | Constant m, Constant n => Constant (Z.min m n)
+  | e1, e2 => Min e1 e2
+  end.
+
+Lemma make_min_correct :
+  forall env e1 e2, eval_expr env (make_min e1 e2) = Z.min (eval_expr env e1) (eval_expr env e2).
+Proof.
+  intros env e1 e2; unfold make_min; repeat (destruct_match; simpl); reflexivity.
 Qed.
 
 

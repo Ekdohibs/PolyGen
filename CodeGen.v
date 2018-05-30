@@ -130,7 +130,7 @@ Fixpoint find_lower_bound_aux (e : option expr) (n : nat) (p : polyhedron) :=
   match p with
   | nil => match e with Some e => Ok e | None => Err "No lower bound found" end
   | c :: p => if nth n (fst c) 0 <? 0 then
-               find_lower_bound_aux (Some (match e with Some e => Max e (make_lower_bound n c) | None => make_lower_bound n c end)) n p
+               find_lower_bound_aux (Some (match e with Some e => make_max e (make_lower_bound n c) | None => make_lower_bound n c end)) n p
              else
                find_lower_bound_aux e n p
   end.
@@ -149,7 +149,7 @@ Proof.
   - intros env x e lb Hlb Hlen. simpl in *.
     destruct (nth n (fst a) 0 <? 0) eqn:Hcmp.
     + reflect. rewrite IHpol; eauto; simpl.
-      destruct e; simpl; [rewrite Z.max_lub_iff|]; rewrite make_lower_bound_correct by auto; split.
+      destruct e; simpl; [rewrite make_max_correct, Z.max_lub_iff|]; rewrite make_lower_bound_correct by auto; split.
       * intros [[H1 H2] H3]. split; auto. intros c [Hce|Hcin] Hcnth; [congruence|auto].
       * intros [H1 H2]. split; [split|]; auto.
       * intros [H1 H2]. split; auto. intros c [Hce|Hcin] Hcnth; [congruence|auto].
@@ -163,7 +163,7 @@ Fixpoint find_upper_bound_aux (e : option expr) (n : nat) (p : polyhedron) :=
   match p with
   | nil => match e with Some e => Ok e | None => Err "No upper bound found" end
   | c :: p => if 0 <? nth n (fst c) 0 then
-               find_upper_bound_aux (Some (match e with Some e => Min e (make_upper_bound n c) | None => make_upper_bound n c end)) n p
+               find_upper_bound_aux (Some (match e with Some e => make_min e (make_upper_bound n c) | None => make_upper_bound n c end)) n p
              else
                find_upper_bound_aux e n p
   end.
@@ -182,7 +182,7 @@ Proof.
   - intros env x e lb Hub Hlen. simpl in *.
     destruct (0 <? nth n (fst a) 0) eqn:Hcmp.
     + reflect. rewrite IHpol; eauto; simpl.
-      destruct e; simpl; [rewrite Z.min_glb_lt_iff|]; rewrite make_upper_bound_correct by auto; split.
+      destruct e; simpl; [rewrite make_min_correct, Z.min_glb_lt_iff|]; rewrite make_upper_bound_correct by auto; split.
       * intros [[H1 H2] H3]. split; auto. intros c [Hce|Hcin] Hcnth; [congruence|auto].
       * intros [H1 H2]. split; [split|]; auto.
       * intros [H1 H2]. split; auto. intros c [Hce|Hcin] Hcnth; [congruence|auto].
@@ -222,6 +222,134 @@ Proof.
   split.
   - intros [H1 H2] c Hin Hnotzero. destruct (nth n (fst c) 0 <=? 0) eqn:Hcmp; reflect; [apply H1 | apply H2]; auto; lia.
   - intros H; split; intros c Hin Hcmp; apply H; auto; lia.
+Qed.
+
+Definition find_eq (n : nat) (p : polyhedron) :=
+  let l1 := filter (fun c => 0 <? nth n (fst c) 0) p in
+  let l2 := filter (fun c => nth n (fst c) 0 <? 0) p in
+  let l12 := list_prod l1 l2 in
+  match find (fun c12 => is_eq (fst (fst c12)) (mult_vector (-1) (fst (snd c12))) && (snd (fst c12) =? -snd (snd c12))) l12 with
+  | None => None
+  | Some (c1, c2) => Some c1
+  end.
+
+Theorem find_eq_in :
+  forall n pol c, find_eq n pol = Some c -> In c pol.
+Proof.
+  intros n pol c Hfind. unfold find_eq in *.
+  match goal with [ Hfind : context[match ?X with _ => _ end] |- _ ] => destruct X as [[c1 c2]|] eqn:Hfind1 end; [|congruence].
+  injection Hfind as Hfind; rewrite <- Hfind.
+  apply find_some in Hfind1; reflect; destruct Hfind1 as [Hfind1 [Heql Heqc]]. reflect; simpl in *.
+  rewrite in_prod_iff, !filter_In in Hfind1. tauto.
+Qed.
+
+Theorem find_eq_correct :
+  forall n pol c p t, 0 < t -> find_eq n pol = Some c ->
+                 (forall c, In c pol -> nth n (fst c) 0 <> 0 -> satisfies_constraint p (mult_constraint_cst t c) = true) -> dot_product p (fst c) = t * snd c.
+Proof.
+  intros n pol c p t Ht Hfind Hin.
+  unfold find_eq, in_poly, satisfies_constraint in *.
+  match goal with [ Hfind : context[match ?X with _ => _ end] |- _ ] => destruct X as [[c1 c2]|] eqn:Hfind1 end; [|congruence].
+  injection Hfind as Hfind; rewrite <- Hfind.
+  apply find_some in Hfind1; reflect; destruct Hfind1 as [Hfind1 [Heql Heqc]]. reflect; simpl in *.
+  rewrite in_prod_iff, !filter_In in Hfind1.
+  destruct Hfind1 as [[Hin1 ?] [Hin2 ?]]. reflect.
+  apply Hin in Hin1; apply Hin in Hin2; try lia; reflect.
+  rewrite Heql, dot_product_mult_right in *. nia.
+Qed.
+
+Theorem find_eq_correct_1 :
+  forall n pol c p, find_eq n pol = Some c -> (forall c, In c pol -> nth n (fst c) 0 <> 0 -> satisfies_constraint p c = true) -> dot_product p (fst c) = snd c.
+Proof.
+  intros n pol c p Hfind Hin.
+  rewrite find_eq_correct with (t := 1) (n := n) (pol := pol); auto; try lia.
+  intros c1. rewrite mult_constraint_cst_1. apply Hin.
+Qed.
+
+Theorem find_eq_nth :
+  forall n pol c, find_eq n pol = Some c -> 0 < nth n (fst c) 0.
+Proof.
+  intros n pol c Hfind.
+  unfold find_eq in *.
+  match goal with [ Hfind : context[match ?X with _ => _ end] |- _ ] => destruct X as [[c1 c2]|] eqn:Hfind1 end; [|congruence].
+  injection Hfind as Hfind; rewrite <- Hfind.
+  apply find_some in Hfind1; reflect; destruct Hfind1 as [Hfind1 [Heql Heqc]]. reflect; simpl in *.
+  rewrite in_prod_iff, !filter_In in Hfind1.
+  destruct Hfind1 as [[? ?] [? ?]]. reflect; auto.
+Qed.
+
+Definition solve_eq n c :=
+  (make_div (make_affine_expr n (mult_vector (-1) (fst c), snd c)) (nth n (fst c) 0),
+   make_eq (make_mod (make_affine_expr n (mult_vector (-1) (fst c), snd c)) (nth n (fst c) 0)) (Constant 0)).
+
+Lemma solve_eq_correct :
+  forall n c env x, length env = n -> nth n (fst c) 0 <> 0 ->
+               (eval_expr env (fst (solve_eq n c)) = x /\ eval_test env (snd (solve_eq n c)) = true) <->
+                dot_product (rev env ++ x :: nil) (fst c) = snd c.
+Proof.
+  intros n c env x Hlen Hnz. simpl.
+  rewrite make_div_correct, make_eq_correct, make_mod_correct, !make_affine_expr_correct by auto. simpl.
+  rewrite !dot_product_mult_left, dot_product_app_left, dot_product_resize_right, dot_product_commutative.
+  rewrite rev_length, Hlen.
+  replace (dot_product (x :: nil) (skipn n (fst c))) with (x * nth n (fst c) 0) at 1;
+    [| transitivity (x * nth 0 (skipn n (fst c)) 0);
+       [ rewrite nth_skipn; f_equal; f_equal; lia
+       | destruct (skipn n (fst c)) as [|z l]; [|destruct l]; simpl; lia
+       ]
+    ].
+  reflect. split.
+  - intros [Hdiv Hmod]. rewrite <- Z.div_exact in Hmod by auto. nia.
+  - intros H. rewrite <- H, Z.add_assoc, Z.add_opp_diag_l, Z.add_0_l. split.
+    + apply Z.div_mul; auto.
+    + apply Z.mod_mul; auto.
+Qed.
+
+Definition make_constraint_with_eq n c1 c2 :=
+  let '(g, (aa, bb)) := Z.ggcd (nth n (fst c1) 0) (nth n (fst c2) 0) in
+  add_constraint (mult_constraint (Z.sgn aa * -bb) c1) (mult_constraint (Z.abs aa) c2).
+
+Lemma make_constraint_with_eq_correct :
+  forall n c1 c2 p t, dot_product p (fst c1) = t * snd c1 -> nth n (fst c1) 0 <> 0 ->
+                 satisfies_constraint p (mult_constraint_cst t (make_constraint_with_eq n c1 c2)) = satisfies_constraint p (mult_constraint_cst t c2).
+Proof.
+  intros n c1 c2 p t Hc1 Hcnz1. unfold make_constraint_with_eq.
+  remember (nth n (fst c1) 0) as a. 
+  remember (nth n (fst c2) 0) as b.
+  generalize (Z.ggcd_correct_divisors a b). generalize (Z.ggcd_gcd a b).
+  destruct Z.ggcd as [g [aa bb]] eqn:Hggcd. simpl. intros Hg [Haa Hbb].
+  unfold satisfies_constraint, add_constraint, mult_constraint; simpl.
+  rewrite add_vector_dot_product_distr_right, !dot_product_mult_right, eq_iff_eq_true; reflect.
+  nia.
+Qed.
+
+Lemma make_constraint_with_eq_correct_1 :
+  forall n c1 c2 p, dot_product p (fst c1) = snd c1 -> nth n (fst c1) 0 <> 0 ->
+               satisfies_constraint p (make_constraint_with_eq n c1 c2) = satisfies_constraint p c2.
+Proof.
+  intros n c1 c2 p Hc1 Hcnz1.
+  generalize (make_constraint_with_eq_correct n c1 c2 p 1).
+  rewrite !mult_constraint_cst_1. intros H; apply H; lia.
+Qed.
+
+Lemma make_constraint_with_eq_nth :
+  forall n c1 c2, nth n (fst c1) 0 <> 0 -> nth n (fst (make_constraint_with_eq n c1 c2)) 0 = 0.
+Proof.
+  intros n c1 c2 Hcnz1. unfold make_constraint_with_eq.
+  remember (nth n (fst c1) 0) as a. 
+  remember (nth n (fst c2) 0) as b.
+  generalize (Z.ggcd_correct_divisors a b). generalize (Z.ggcd_gcd a b).
+  destruct Z.ggcd as [g [aa bb]] eqn:Hggcd. simpl. intros Hg [Haa Hbb].
+  unfold satisfies_constraint, add_constraint, mult_constraint; simpl.
+  rewrite add_vector_nth, !mult_nth.
+  nia.
+Qed.
+
+Lemma make_constraint_with_eq_preserve_zeros :
+  forall n m c1 c2, nth n (fst c1) 0 = 0 -> nth n (fst c2) 0 = 0 -> nth n (fst (make_constraint_with_eq m c1 c2)) 0 = 0.
+Proof.
+  intros n m c1 c2 H1 H2. unfold make_constraint_with_eq.
+  destruct Z.ggcd as [? [? ?]]. unfold add_constraint, mult_constraint. simpl.
+  rewrite add_vector_nth, !mult_nth. nia.
 Qed.
 
 (** * Polyhedral projection *)
@@ -802,10 +930,79 @@ Module PolyProjectImpl (Import Imp: FullImpureMonad) (Canon : PolyCanonizer Imp)
         rewrite <- app_assoc. reflexivity.
   Qed.
 
+  Fixpoint simplify_poly (n : nat) (p : polyhedron) :=
+    match n with
+    | 0%nat => p
+    | S n =>
+      let nz := filter (fun c => negb (nth n (fst c) 0 =? 0)) p in
+      let z := filter (fun c => nth n (fst c) 0 =? 0) p in
+      match find_eq n nz with
+      | None => nz ++ simplify_poly n z
+      | Some c => c :: mult_constraint (-1) c ::
+                   simplify_poly n (map (fun c1 => make_constraint_with_eq n c c1) nz ++ z)
+      end
+    end.
+
+  Lemma simplify_poly_correct :
+    forall n pol p t, 0 < t -> in_poly p (expand_poly t (simplify_poly n pol)) = in_poly p (expand_poly t pol).
+  Proof.
+    induction n.
+    - intros; simpl; reflexivity.
+    - intros pol p t Ht. simpl.
+      set (nz := filter (fun c => negb (nth n (fst c) 0 =? 0)) pol).
+      set (z := filter (fun c => nth n (fst c) 0 =? 0) pol).
+      transitivity (in_poly p (expand_poly t nz) && in_poly p (expand_poly t z)).
+      + destruct (find_eq n nz) as [c|] eqn:Hfindeq.
+        * unfold in_poly in *. simpl. rewrite IHn; auto. rewrite andb_assoc.
+          replace (satisfies_constraint p (mult_constraint_cst t c) &&
+                   satisfies_constraint p (mult_constraint_cst t (mult_constraint (-1) c))) with
+              (dot_product p (fst c) =? t * snd c)
+            by (unfold satisfies_constraint, mult_constraint; simpl; rewrite eq_iff_eq_true, dot_product_mult_right; reflect; lia).
+          assert (Hcnth : nth n (fst c) 0 <> 0) by (apply find_eq_nth in Hfindeq; lia).
+          destruct (dot_product p (fst c) =? t * snd c) eqn:Heq; simpl; reflect.
+          -- unfold expand_poly.
+             rewrite map_app, forallb_app, map_map, !forallb_map. f_equal. apply forallb_ext.
+             intros c1. rewrite make_constraint_with_eq_correct; auto.
+          -- destruct (forallb (satisfies_constraint p) (expand_poly t nz)) eqn:Hin; simpl; [|reflexivity]. exfalso; apply Heq.
+             unfold expand_poly in Hin. rewrite forallb_map, forallb_forall in Hin.
+             eapply find_eq_correct; eauto.
+        * rewrite expand_poly_app, in_poly_app. rewrite IHn by auto. reflexivity.
+      + rewrite eq_iff_eq_true. reflect. unfold expand_poly, in_poly, nz, z; rewrite !forallb_map, !forallb_forall.
+        split.
+       * intros [H1 H2] c Hc; specialize (H1 c); specialize (H2 c).
+         rewrite filter_In in H1, H2. destruct (nth n (fst c) 0 =? 0); auto.
+       * intros H. split; intros c Hcin; rewrite filter_In in Hcin; apply H; tauto.
+  Qed.
+
+
+  Lemma simplify_poly_preserve_zeros :
+    forall n m pol, (forall c, In c pol -> nth m (fst c) 0 = 0) -> (forall c, In c (simplify_poly n pol) -> nth m (fst c) 0 = 0).
+  Proof.
+    induction n.
+    - intros; auto.
+    - intros m pol H c Hc.
+      simpl in Hc.
+      set (nz := filter (fun c => negb (nth n (fst c) 0 =? 0)) pol) in *.
+      set (z := filter (fun c => nth n (fst c) 0 =? 0) pol) in *.
+      destruct (find_eq n nz) as [c1|] eqn:Hfindeq.
+      + simpl in Hc.
+        assert (Hc1 : nth m (fst c1) 0 = 0) by (apply find_eq_in in Hfindeq; apply H; unfold nz in Hfindeq; rewrite filter_In in Hfindeq; tauto).
+        destruct Hc as [Hc | [Hc | Hc]];
+          [rewrite <- Hc; auto | rewrite <- Hc; unfold mult_constraint; simpl; rewrite mult_nth; lia|].
+        eapply IHn; [|apply Hc].
+        intros c2 Hin2; rewrite in_app_iff, in_map_iff in Hin2.
+        destruct Hin2 as [[c3 [Heq2 Hin3]] | Hin2]; [|apply H; unfold z in Hin2; rewrite filter_In in Hin2; tauto].
+        rewrite <- Heq2, make_constraint_with_eq_preserve_zeros; auto. apply H.
+        unfold nz in Hin3; rewrite filter_In in Hin3; tauto.
+      + rewrite in_app_iff in Hc.
+        destruct Hc as [Hc | Hc]; [apply H; unfold nz in Hc; rewrite filter_In in Hc; tauto|].
+        eapply IHn; [|apply Hc]. intros c1 Hc1; apply H; unfold z in Hc1; rewrite filter_In in Hc1; tauto.
+  Qed.
+
   Definition project (np : nat * polyhedron) : imp polyhedron :=
     let (n, p) := np in
     let k := poly_nrl p in
-    do_project n (k - n)%nat p.
+    BIND r <- do_project n (k - n)%nat p -; pure (simplify_poly n r).
 
   Lemma project_in_iff :
     forall s n p pol, 0 < s -> WHEN proj <- project (n, pol) THEN
@@ -814,8 +1011,10 @@ Module PolyProjectImpl (Import Imp: FullImpureMonad) (Canon : PolyCanonizer Imp)
   Proof.
     intros s n p pol Hs proj Hproj.
     unfold project in Hproj.
+    bind_imp_destruct Hproj r Hr; apply mayReturn_pure in Hproj; rewrite <- Hproj in *.
+    rewrite simplify_poly_correct by auto.
     remember (poly_nrl pol) as u.
-    rewrite (do_project_in_iff _ _ _ _ _ Hs _ Hproj).
+    rewrite (do_project_in_iff _ _ _ _ _ Hs _ Hr).
     split.
     - intros [t [m [Hmlen [Ht Hin]]]]; exists t. exists m. split; [auto|].
       rewrite <- in_poly_nrlength with (n := u) in Hin by (rewrite expand_poly_nrl; nia).
@@ -920,18 +1119,23 @@ Module PolyProjectImpl (Import Imp: FullImpureMonad) (Canon : PolyCanonizer Imp)
     forall n pol c, WHEN proj <- project (n, pol) THEN In c proj -> fst c =v= resize n (fst c).
   Proof.
     intros n pol c proj Hproj Hin.
-    apply vector_nth_veq. intros k.
+    apply vector_nth_veq.
     unfold project in Hproj.
+    bind_imp_destruct Hproj r Hr; apply mayReturn_pure in Hproj; rewrite <- Hproj in *.
+    intros k.
     rewrite nth_resize.
     destruct (k <? n)%nat eqn:Hkn; reflect; [reflexivity|].
-    destruct (k <? n + (poly_nrl pol - n))%nat eqn:Hkrl; reflect.
-    - apply (do_project_constraints _ _ _ _ (conj Hkn Hkrl) _ Hproj); auto.
-    - assert (Hnrl : (poly_nrl pol <= k)%nat) by lia.
-      rewrite <- poly_nrl_def in Hnrl.
-      assert (H : forall c, In c pol -> nth k (fst c) 0 = 0).
-      + intros c1 Hin1; specialize (Hnrl c1 Hin1).
-        apply nth_eq with (n := k) in Hnrl. rewrite nth_resize in Hnrl. destruct (k <? k)%nat eqn:Hkk; reflect; lia.
-      + apply (do_project_no_new_var _ _ _ _  H _ Hproj _ Hin).
+    assert (Hcr : forall c1, In c1 r -> nth k (fst c1) 0 = 0).
+    - intros c1 Hin1.
+      destruct (k <? n + (poly_nrl pol - n))%nat eqn:Hkrl; reflect.
+      + apply (do_project_constraints _ _ _ _ (conj Hkn Hkrl) _ Hr); auto.
+      +  assert (Hnrl : (poly_nrl pol <= k)%nat) by lia.
+         rewrite <- poly_nrl_def in Hnrl.
+         assert (H : forall c, In c pol -> nth k (fst c) 0 = 0).
+         * intros c2 Hin2; specialize (Hnrl c2 Hin2).
+           apply nth_eq with (n := k) in Hnrl. rewrite nth_resize in Hnrl. destruct (k <? k)%nat eqn:Hkk; reflect; lia.
+         * apply (do_project_no_new_var _ _ _ _  H _ Hr _ Hin1).
+    - eapply simplify_poly_preserve_zeros; eauto.
   Qed.
 
   Theorem project_next_r_inclusion :
@@ -978,6 +1182,178 @@ Module PolyProjectImpl (Import Imp: FullImpureMonad) (Canon : PolyCanonizer Imp)
 
 End PolyProjectImpl.
 
+(*
+Module PolyProjectSimplifier (Import Imp: FullImpureMonad) (Base : PolyProject Imp) <: PolyProject Imp.
+
+  Fixpoint simplify_poly (n : nat) (p : polyhedron) :=
+    match n with
+    | 0%nat => p
+    | S n =>
+      let nz := filter (fun c => negb (nth n (fst c) 0 =? 0)) p in
+      let z := filter (fun c => nth n (fst c) 0 =? 0) p in
+      match find_eq n nz with
+      | None => nz ++ simplify_poly n z
+      | Some c => c :: mult_constraint (-1) c ::
+                   simplify_poly n (map (fun c1 => make_constraint_with_eq n c c1) nz ++ z)
+      end
+    end.
+
+  Lemma simplify_poly_correct :
+    forall n pol p, in_poly p (simplify_poly n pol) = in_poly p pol.
+  Proof.
+    induction n.
+    - intros; simpl; reflexivity.
+    - intros pol p. simpl.
+      set (nz := filter (fun c => negb (nth n (fst c) 0 =? 0)) pol).
+      set (z := filter (fun c => nth n (fst c) 0 =? 0) pol).
+      transitivity (in_poly p nz && in_poly p z).
+      + destruct (find_eq n nz) as [c|] eqn:Hfindeq.
+        * unfold in_poly in *. simpl. rewrite IHn. rewrite andb_assoc.
+          replace (satisfies_constraint p c && satisfies_constraint p (mult_constraint (-1) c)) with (dot_product p (fst c) =? snd c)
+            by (unfold satisfies_constraint, mult_constraint; simpl; rewrite eq_iff_eq_true, dot_product_mult_right; reflect; lia).
+          assert (Hcnth : nth n (fst c) 0 <> 0) by (apply find_eq_nth in Hfindeq; lia).
+          destruct (dot_product p (fst c) =? snd c) eqn:Heq; simpl; reflect.
+          -- rewrite forallb_app, forallb_map. f_equal. apply forallb_ext.
+             intros c1. rewrite make_constraint_with_eq_correct; auto.
+          -- destruct (forallb (satisfies_constraint p) nz) eqn:Hin; simpl; [|reflexivity]. exfalso; apply Heq.
+             rewrite forallb_forall in Hin.
+             eapply find_eq_correct; eauto.
+        * rewrite in_poly_app. rewrite IHn. reflexivity.
+      + rewrite eq_iff_eq_true. reflect. unfold in_poly, nz, z; rewrite !forallb_forall.
+        split.
+       * intros [H1 H2] c Hc; specialize (H1 c); specialize (H2 c).
+         rewrite filter_In in H1, H2. destruct (nth n (fst c) 0 =? 0); auto.
+       * intros H. split; intros c Hcin; rewrite filter_In in Hcin; apply H; tauto.
+  Qed.
+
+  Lemma simplify_poly_preserve_zeros :
+    forall n m pol, (forall c, In c pol -> nth m (fst c) 0 = 0) -> (forall c, In c (simplify_poly n pol) -> nth m (fst c) 0 = 0).
+  Proof.
+    induction n.
+    - intros; auto.
+    - intros m pol H c Hc.
+      simpl in Hc.
+      set (nz := filter (fun c => negb (nth n (fst c) 0 =? 0)) pol) in *.
+      set (z := filter (fun c => nth n (fst c) 0 =? 0) pol) in *.
+      destruct (find_eq n nz) as [c1|] eqn:Hfindeq.
+      + simpl in Hc.
+        assert (Hc1 : nth m (fst c1) 0 = 0) by (apply find_eq_in in Hfindeq; apply H; unfold nz in Hfindeq; rewrite filter_In in Hfindeq; tauto).
+        destruct Hc as [Hc | [Hc | Hc]];
+          [rewrite <- Hc; auto | rewrite <- Hc; unfold mult_constraint; simpl; rewrite mult_nth; lia|].
+        eapply IHn; [|apply Hc].
+        intros c2 Hin2; rewrite in_app_iff, in_map_iff in Hin2.
+        destruct Hin2 as [[c3 [Heq2 Hin3]] | Hin2]; [|apply H; unfold z in Hin2; rewrite filter_In in Hin2; tauto].
+        rewrite <- Heq2, make_constraint_with_eq_preserve_zeros; auto. apply H.
+        unfold nz in Hin3; rewrite filter_In in Hin3; tauto.
+      + rewrite in_app_iff in Hc.
+        destruct Hc as [Hc | Hc]; [apply H; unfold nz in Hc; rewrite filter_In in Hc; tauto|].
+        eapply IHn; [|apply Hc]. intros c1 Hc1; apply H; unfold z in Hc1; rewrite filter_In in Hc1; tauto.
+  Qed.
+
+  (*
+  Lemma simplify_poly_correct_nz :
+    forall n pol p, (forall c, In c pol -> nth n (fst c) 0 <> 0 -> satisfies_constraint p c = true) ->
+               (forall c, In c (simplify_poly (S n) pol) -> nth n (fst c) 0 <> 0 -> satisfies_constraint p c = true).
+  Proof.
+    intros n pol p H c Hcin Hcn.
+    simpl in Hcin.
+    set (nz := filter (fun c => negb (nth n (fst c) 0 =? 0)) pol) in *.
+    set (z := filter (fun c => nth n (fst c) 0 =? 0) pol) in *.
+    destruct (find_eq n nz) as [c1|] eqn:Hfindeq.
+    - simpl in Hcin.
+      assert (Heq : dot_product p (fst c1) = snd c1)
+        by (eapply find_eq_correct; [apply Hfindeq|]; intros c2 Hc2 Hcn2; unfold nz in Hc2; rewrite filter_In in Hc2; apply H; tauto).
+      destruct Hcin as [Hcin | [Hcin | Hcin]]; [rewrite <- Hcin|rewrite <- Hcin|]; unfold satisfies_constraint; reflect;
+        [lia|unfold mult_constraint; simpl; rewrite dot_product_mult_right; lia|].
+      exfalso. apply Hcn. eapply simplify_poly_preserve_zeros; [|apply Hcin].
+      intros c2 Hc2. rewrite in_app_iff, in_map_iff in Hc2.
+      destruct Hc2 as [[c3 [Heq2 Hc3]] | Hc2]; [|unfold z in Hc2; rewrite filter_In in Hc2; reflect; tauto].
+      rewrite <- Heq2. apply make_constraint_with_eq_nth. apply find_eq_nth in Hfindeq; lia.
+    - rewrite in_app_iff in Hcin. destruct Hcin as [Hcin | Hcin].
+      + apply H; [|auto]. unfold nz in Hcin; rewrite filter_In in Hcin; tauto.
+      + exfalso; apply Hcn. eapply simplify_poly_preserve_zeros; [|apply Hcin].
+        intros c1 Hc1; unfold z in Hc1; rewrite filter_In in Hc1; reflect; tauto.
+  Qed.
+   *)
+
+  Lemma simplify_poly_correct_nz :
+    forall n pol p, (forall c, In c pol -> nth n (fst c) 0 = 0 -> satisfies_constraint p c = true) ->
+               (forall c, In c (simplify_poly (S n) pol) -> nth n (fst c) 0 <> 0 -> satisfies_constraint p c = true) ->
+               (forall c, In c pol -> nth n (fst c) 0 <> 0 -> satisfies_constraint p c = true).
+  Proof.
+    intros n pol p Hz Hnz c Hcin Hcn.
+    simpl in Hnz.
+    set (nz := filter (fun c => negb (nth n (fst c) 0 =? 0)) pol) in *.
+    set (z := filter (fun c => nth n (fst c) 0 =? 0) pol) in *.
+    destruct (find_eq n nz) as [ceq|] eqn:Hfindeq.
+    - assert (Hceqn : nth n (fst ceq) 0 <> 0) by (generalize (find_eq_nth _ _ _ Hfindeq); lia).
+      assert (Heq : dot_product p (fst ceq) = snd ceq). {
+        generalize (Hnz ceq); generalize (Hnz (mult_constraint (-1) ceq)).
+        unfold mult_constraint, satisfies_constraint; simpl.
+        rewrite mult_nth, dot_product_mult_right; reflect.
+        clear Hnz Hz. firstorder.
+      }
+(*      specialize (Hnz (make_constraint_with_eq n ceq c) *) admit.
+    - apply Hnz; [|auto]. rewrite in_app_iff; left. unfold nz.
+      rewrite filter_In; reflect; auto.
+  Admitted.
+
+  Definition project np :=
+    BIND r <- Base.project np -; pure (simplify_poly (fst np) r).
+
+  Lemma project_inclusion :
+    forall n p pol, in_poly p pol = true -> WHEN proj <- project (n, pol) THEN in_poly (resize n p) proj = true.
+  Proof.
+    intros n p pol Hin. do 3 xastep eauto. simpl.
+    rewrite simplify_poly_correct.
+    eapply Base.project_inclusion in Hexta; eauto.
+  Qed.
+
+  Definition project_invariant := Base.project_invariant.
+
+  Lemma project_invariant_inclusion :
+    forall n pol p, in_poly p pol = true -> project_invariant n pol (resize n p).
+  Proof.
+    apply Base.project_invariant_inclusion.
+  Qed.
+
+  Lemma project_id :
+    forall n pol p, (forall c, In c pol -> fst c =v= resize n (fst c)) -> project_invariant n pol p -> in_poly p pol = true.
+  Proof.
+    apply Base.project_id.
+  Qed.
+
+  Axiom is_exact_projection :
+    forall v p n, project_invariant n p v <-> exists t m, 0 < t /\ in_poly (resize n (mult_vector t v) ++ m) (expand_poly t p) = true.
+
+  Lemma project_next_r_inclusion :
+    forall n pol p, project_invariant n pol p ->
+               WHEN proj <- project (S n, pol) THEN
+               (forall c, In c proj -> nth n (fst c) 0 <> 0 -> satisfies_constraint p c = true) ->
+                 project_invariant (S n) pol p.
+  Proof.
+    intros n pol p Hinv. do 3 xastep eauto.
+    intros H. 
+    eapply Base.project_next_r_inclusion in Hexta; eauto.
+    apply Hexta. unfold project_invariant in Hinv.
+    intros. eapply simplify_poly_correct_nz. ; [exact H| |auto].
+    eapply simplify_poly_correct_nz in H.
+    intros c Hc Hnc; apply H; [|apply Hnc].
+
+  Parameter project_invariant_resize :
+    forall n pol p, project_invariant n pol p <-> project_invariant n pol (resize n p).
+
+  Parameter project_invariant_export : nat * polyhedron -> imp polyhedron.
+
+  Parameter project_invariant_export_correct :
+    forall n p pol, WHEN res <- project_invariant_export (n, pol) THEN in_poly p res = true <-> project_invariant n pol p.
+
+  Parameter project_constraint_size :
+    forall n pol c, WHEN proj <- project (n, pol) THEN In c proj -> fst c =v= resize n (fst c).
+
+End PolyProject.
+*)
+
 Module CoreAlarmed := AlarmImpureMonad Vpl.ImpureConfig.Core.
 Import CoreAlarmed.
 
@@ -1012,10 +1388,105 @@ Proof.
   - intros H. apply mayReturn_alarm in H. tauto.
 Qed.
 
+Fixpoint and_all l :=
+  match l with
+  | nil => TConstantTest true
+  | x :: l => make_and x (and_all l)
+  end.
+
+Theorem and_all_correct :
+  forall l env, eval_test env (and_all l) = forallb (eval_test env) l.
+Proof.
+  induction l; simpl in *; [auto|].
+  intros; rewrite make_and_correct, IHl; auto.
+Qed.
+
+Definition make_affine_test n c := make_le (make_linear_expr n (fst c)) (Constant (snd c)).
+
+Lemma make_affine_test_correct :
+  forall env n c, length env = n -> eval_test env (make_affine_test n c) = satisfies_constraint (rev env) c.
+Proof.
+  intros. simpl in *. unfold make_affine_test. rewrite make_le_correct, make_linear_expr_correct; auto.
+  rewrite dot_product_commutative. reflexivity.
+Qed.
+
 Definition scan_dimension (n : nat) (inner : stmt) (p : polyhedron) : imp stmt :=
-  BIND lb <- res_to_alarm (Constant 0) (find_lower_bound n p) -;
-  BIND ub <- res_to_alarm (Constant 0) (find_upper_bound n p) -;
-  pure (Loop lb ub inner).
+  match find_eq n p with
+  | Some c =>
+    let '(result, test) := solve_eq n c in
+    let cstrs := map (fun c1 => make_affine_test n (make_constraint_with_eq n c c1)) (filter (fun c => negb (nth n (fst c) 0 =? 0)) p) in
+    pure (Guard (make_and test (and_all cstrs)) (Loop result (Sum result (Constant 1)) inner))
+  | None => 
+    BIND lb <- res_to_alarm (Constant 0) (find_lower_bound n p) -;
+    BIND ub <- res_to_alarm (Constant 0) (find_upper_bound n p) -;
+    pure (Loop lb ub inner)
+  end.
+
+Lemma scan_dimension_sem :
+  forall n inner pol,
+    WHEN st <- scan_dimension n inner pol THEN
+         forall env mem1 mem2,
+           length env = n ->
+           exists lb ub,
+             (loop_semantics st env mem1 mem2 <-> iter_semantics (fun x => loop_semantics inner (x :: env)) lb ub mem1 mem2) /\
+             (forall x, (forall c, In c pol -> nth n (fst c) 0 <> 0 -> satisfies_constraint (rev (x :: env)) c = true) <-> lb <= x < ub).
+Proof.
+  intros n inner pol st Hst env mem1 mem2 Henvlen.
+  unfold scan_dimension in Hst.
+  destruct (find_eq n pol) as [c|] eqn:Hfindeq.
+  - destruct (solve_eq n c) as [result test] eqn:Hsolve. apply mayReturn_pure in Hst; rewrite <- Hst.
+    match goal with [ Hst : Guard ?T _ = _ |- _ ] => set (test1 := T) end.
+    assert (Hcnth : 0 < nth n (fst c) 0) by (eapply find_eq_nth; eauto).
+    destruct (eval_test env test1) eqn:Htest1.
+    + exists (eval_expr env result). exists (eval_expr env (Sum result (Constant 1))). split.
+      * split.
+        -- intros Hsem. inversion_clear Hsem; [|congruence]. inversion_clear H. auto.
+        -- intros Hsem; constructor; [|auto]. constructor; auto.
+      * intros x. simpl.
+        unfold test1 in Htest1. rewrite make_and_correct in Htest1; reflect.
+        rewrite and_all_correct in Htest1. destruct Htest1 as [Htest Hcstr].
+        transitivity (eval_expr env (fst (solve_eq n c)) = x /\ eval_test env (snd (solve_eq n c)) = true); [|rewrite Hsolve; simpl; intuition lia].
+        rewrite solve_eq_correct by (auto || lia).
+        split.
+        -- intros H. eapply find_eq_correct_1; eauto.
+        -- intros H c1 Hc1in Hc1nth.
+           rewrite forallb_map, forallb_forall in Hcstr. specialize (Hcstr c1).
+           rewrite filter_In in Hcstr. reflect. rewrite make_affine_test_correct in Hcstr by auto.
+           rewrite <- make_constraint_with_eq_correct_1 with (n := n) (c1 := c) by (auto || lia).
+           rewrite <- Hcstr by auto.
+           unfold satisfies_constraint. f_equal.
+           rewrite <- dot_product_assign_left_zero with (k := n) (s := 0) by (apply make_constraint_with_eq_nth; lia).
+           f_equiv. rewrite assign_app_ge by (rewrite rev_length; lia). rewrite rev_length, Henvlen, Nat.sub_diag.
+           unfold assign. simpl.
+           rewrite <- app_nil_r. f_equiv.
+    + exists 0. exists 0. split.
+      * split.
+        -- intros Hsem. inversion_clear Hsem; [congruence|]. constructor; lia.
+        -- intros Hsem. inversion_clear Hsem; [|lia]. apply LGuardFalse. auto.
+      * split; [|lia]. intros H. exfalso.
+        enough (eval_test env test1 = true) by congruence.
+        unfold test1. rewrite make_and_correct, and_all_correct, forallb_map. reflect.
+        assert (Heq : dot_product (rev (x :: env)) (fst c) = snd c) by (eapply find_eq_correct_1; eauto). simpl in Heq.
+        split.
+        -- rewrite <- solve_eq_correct in Heq; [|exact Henvlen|lia]. rewrite Hsolve in Heq; simpl in Heq; tauto.
+        -- rewrite forallb_forall. intros c1 Hc1in. rewrite filter_In in Hc1in. reflect.
+           rewrite make_affine_test_correct by auto. destruct Hc1in as [Hc1in Hc1n]. specialize (H c1 Hc1in Hc1n).
+           rewrite <- make_constraint_with_eq_correct_1 with (n := n) (c1 := c) in H by (auto || lia).
+           rewrite <- H. unfold satisfies_constraint. f_equal.
+           rewrite <- dot_product_assign_left_zero with (k := n) (s := 0) (v1 := rev (x :: env)) by (apply make_constraint_with_eq_nth; lia).
+           f_equiv. simpl. rewrite assign_app_ge by (rewrite rev_length; lia). rewrite rev_length, Henvlen, Nat.sub_diag.
+           unfold assign. simpl. rewrite <- app_nil_r with (l := rev env) at 1. f_equiv.
+  - bind_imp_destruct Hst lb Hlb. apply res_to_alarm_correct in Hlb.
+    bind_imp_destruct Hst ub Hub. apply res_to_alarm_correct in Hub.
+    exists (eval_expr env lb). exists (eval_expr env ub).
+    apply mayReturn_pure in Hst. rewrite <- Hst.
+    split.
+    + split.
+      * intros Hsem; inversion_clear Hsem; auto.
+      * intros Hsem; constructor; auto.
+    + intros x. rewrite find_bounds_correct; try reflexivity; auto.
+Qed.
+
 
 Fixpoint generate_loop (d : nat) (n : nat) (pi : Polyhedral_Instruction) : imp stmt :=
   match d with
@@ -1130,28 +1601,6 @@ Proof.
   - intros [x [H1 H2]]; exists x; assumption.
 Qed.
 
-Lemma scan_dimension_sem :
-  forall n inner pol,
-    WHEN st <- scan_dimension n inner pol THEN
-         forall env mem1 mem2,
-           length env = n ->
-           exists lb ub,
-             (loop_semantics st env mem1 mem2 <-> iter_semantics (fun x => loop_semantics inner (x :: env)) lb ub mem1 mem2) /\
-             (forall x, (forall c, In c pol -> nth n (fst c) 0 <> 0 -> satisfies_constraint (rev (x :: env)) c = true) <-> lb <= x < ub).
-Proof.
-  intros n inner pol st Hst env mem1 mem2 Henvlen.
-  unfold scan_dimension in Hst.
-  bind_imp_destruct Hst lb Hlb. apply res_to_alarm_correct in Hlb.
-  bind_imp_destruct Hst ub Hub. apply res_to_alarm_correct in Hub.
-  exists (eval_expr env lb). exists (eval_expr env ub).
-  apply mayReturn_pure in Hst. rewrite <- Hst.
-  split.
-  - split.
-    + intros Hsem; inversion_clear Hsem; auto.
-    + intros Hsem; constructor; auto.
-  - intros x. rewrite find_bounds_correct; try reflexivity; auto.
-Qed.
-
 Lemma env_scan_inj_nth :
   forall pis env1 env2 n m p s, length env1 = length env2 -> (s < length env1)%nat ->
                            env_scan pis env1 n m p = true -> env_scan pis env2 n m p = true -> nth s env1 0 = nth s env2 0.
@@ -1215,28 +1664,6 @@ Proof.
         rewrite H1, H2 in Hcmp. eapply lex_app_not_gt; rewrite Hcmp. congruence.
     + simpl. intros m p. rewrite env_scan_extend; eauto; try lia.
       replace (S (n - S d)) with (n - d)%nat by lia. apply Hproj.
-Qed.
-
-Fixpoint and_all l :=
-  match l with
-  | nil => TConstantTest true
-  | x :: l => make_and x (and_all l)
-  end.
-
-Theorem and_all_correct :
-  forall l env, eval_test env (and_all l) = forallb (eval_test env) l.
-Proof.
-  induction l; simpl in *; [auto|].
-  intros; rewrite make_and_correct, IHl; auto.
-Qed.
-
-Definition make_affine_test n c := make_le (make_linear_expr n (fst c)) (Constant (snd c)).
-
-Lemma make_affine_test_correct :
-  forall env n c, length env = n -> eval_test env (make_affine_test n c) = satisfies_constraint (rev env) c.
-Proof.
-  intros. simpl in *. unfold make_affine_test. rewrite make_le_correct, make_linear_expr_correct; auto.
-  rewrite dot_product_commutative. reflexivity.
 Qed.
 
 Definition make_poly_test n poly :=

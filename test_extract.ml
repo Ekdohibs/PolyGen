@@ -12,11 +12,25 @@ let coqnat_to_int n =
     | S n -> iter n (r + 1)
   in iter n 0
 
+let int_to_coqnat n =
+  assert (n >= 0);
+  let rec iter n r =
+    match n with
+    | 0 -> r
+    | _ -> iter (n - 1) (S r)
+  in iter n O
+
 let rec coqpos_to_int n =
   match n with
   | Coq_xH -> 1
   | Coq_xO n -> 2 * coqpos_to_int n
   | Coq_xI n -> 2 * coqpos_to_int n + 1
+
+let rec int_to_coqpos n =
+  assert (n > 0);
+  if n = 1 then Coq_xH
+  else if n land 1 = 0 then Coq_xO (int_to_coqpos (n lsr 1))
+  else Coq_xI (int_to_coqpos (n lsr 1))
 
 let coqZ_to_int n =
   match n with
@@ -24,8 +38,21 @@ let coqZ_to_int n =
   | Zpos n -> coqpos_to_int n
   | Zneg n -> - coqpos_to_int n
 
+let int_to_coqZ n =
+  if n = 0 then Z0
+  else if n > 0 then Zpos (int_to_coqpos n)
+  else Zneg (int_to_coqpos (-n))
+
+let letter_of_int n =
+  assert (n < 26);
+  char_of_int (97 + n)
+
 let print_var_name ff n =
-  Format.fprintf ff "x%d" n
+  assert (n >= 0);
+  if (n < 26) then
+    Format.fprintf ff "%c" (letter_of_int n)
+  else
+    Format.fprintf ff "%c%d" (letter_of_int (n mod 26)) (n / 26)
 
 let print_linear ff l =
   let l = List.filter (fun x -> snd x <> 0) (List.mapi (fun i x -> (i, coqZ_to_int x)) l) in
@@ -86,15 +113,39 @@ let rec print_test depth ff = function
 
 let rec print_loop depth ff = function
   | Guard (cond, s) -> Format.fprintf ff "@[<v 2>guard %a@,%a@]" (print_test depth) cond (print_loop depth) s
-  | Loop (lb, ub, s) -> Format.fprintf ff "@[<v 2>loop %a = %a to %a@,%a@]" print_var_name depth (print_expr depth) lb (print_expr depth) ub (print_loop (depth + 1)) s
+  | Loop (lb, ub, s) ->
+    if ub = Sum(lb, Constant (Zpos Coq_xH)) then
+      Format.fprintf ff "let %a = %a in@,%a" print_var_name depth (print_expr depth) lb (print_loop (depth + 1)) s
+    else
+      Format.fprintf ff "@[<v 2>loop %a = %a to %a@,%a@]" print_var_name depth (print_expr depth) lb (print_expr depth) ub (print_loop (depth + 1)) s
   | Seq l -> List.iter (print_loop depth ff) l
   | Instr (x, l) -> Format.fprintf ff "instr %d (" x; List.iter (fun x -> Format.fprintf ff "%a, " (print_expr depth) x) l; Format.fprintf ff ")@,"
 
-let () = Format.printf "%a@.@." print_pi test_pi
-let () = Format.printf "%a@.@." print_pi test_pi_lex
-let () =
-  let (gen, ok) = test_pi_generate in
-  if not ok then Format.printf "Generate failed.@."
-  else begin
-    Format.printf "%a@.@." (print_loop 2) gen
-  end
+let coqstring_to_string l =
+  let n = List.length l in
+  let s = Bytes.create n in
+  let rec iter i = function
+    | [] -> ()
+    | c :: l -> Bytes.set s i c; iter (i + 1) l
+  in iter 0 l; Bytes.to_string s
+
+let process_pi (((env_size, scan_dimensions), name), pi) =
+  let env_size = coqnat_to_int env_size in
+  let scan_dimensions = coqnat_to_int scan_dimensions in
+  let name = coqstring_to_string name in
+  let () = Format.printf "%s:@.@." name in
+  let () = Format.printf "Origninal:@.%a@.@." print_pi pi in
+  let sd = int_to_coqnat scan_dimensions in
+  let ev = int_to_coqnat env_size in
+  let pi_lex = PolyLang.pi_elim_schedule sd ev pi in
+  let () = Format.printf "No schedule:@.%a@.@." print_pi pi_lex in
+  let scand = int_to_coqnat (scan_dimensions + List.length pi.pi_schedule) in
+  let totald = int_to_coqnat (env_size + scan_dimensions + List.length pi.pi_schedule) in
+  let (gen, ok) = CodeGen.generate scand totald pi_lex in
+  if ok then
+    Format.printf "Generated code:@.%a@.@." (print_loop env_size) gen
+  else
+    Format.printf "Generation failed.@.@."
+
+
+let () = List.iter process_pi Extraction.test_pis
