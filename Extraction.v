@@ -34,8 +34,14 @@ Notation "- x" := (mult_constraint (-1) x) : aff_scope.
 Notation "x - y" := (x + -y)%aff : aff_scope.
 Notation "$ x" := (nil, x) (at level 30) : aff_scope.
 
-Notation "x <= y" := (mult_constraint_cst (-1) (add_constraint x (mult_constraint (-1) y))) : aff_scope.
+Notation "x /\ y" := (x ++ y) : aff_scope.
+Notation "x <= y" := [ (mult_constraint_cst (-1) (add_constraint x (mult_constraint (-1) y))) ] : aff_scope.
 Notation "x >= y" := (y <= x)%aff : aff_scope.
+Notation "x <= y <= z" := (x <= y /\ y <= z)%aff : aff_scope.
+Notation "x >= y >= z" := (x >= y /\ y >= z)%aff (at level 70, y at next level) : aff_scope.
+Notation "x == y" := (x <= y /\ y <= x)%aff (at level 70) : aff_scope.
+
+Notation "{{ x }}" := x (only parsing).
 
 Definition a := vr 0. Definition b := vr 1. Definition c := vr 2. Definition d := vr 3. Definition e := vr 4. Definition f := vr 5.
 
@@ -73,28 +79,28 @@ Open Scope aff_scope.
 
 Definition test_pi_1 := {|
    pi_instr := dummy ;
-   pi_poly := [ $0 <= c ; $0 <= d ; c <= a ; d <= b ] ;
+   pi_poly := {{ $0 <= c <= a /\ $0 <= d <= b }} ;
    pi_schedule := [d ; c] ;
    pi_transformation := [c ; d] ;
 |}.
 
 Definition test_pi_2 := {|
    pi_instr := dummy ;
-   pi_poly := [ $0 <= d ; d <= a ; b <= 3 * d ; 3 * d <= b ; c <= 2 * d ; 2 * d <= c ] ;
+   pi_poly := {{ $0 <= d <= a /\ b == 3 * d /\ c == 2 * d }} ;
    pi_schedule := [b ; c ; d] ;
    pi_transformation := [b ; c ; d] ;
 |}.
 
 Definition test_pi_3 := {|
    pi_instr := dummy ;
-   pi_poly := [ $0 <= c ; c <= a ; $0 <= c - 3 * b ; c - 3 * b <= $2 ] ;
+   pi_poly := {{ $0 <= c <= a /\ $0 <= c - 3 * b <= $2 }} ;
    pi_schedule := [b ; c - 3 * b] ;
    pi_transformation := [c] ;
-|}%aff.
+|}.
 
 Definition test_pi_4 := {|
    pi_instr := dummy ;
-   pi_poly := [ $0 <= c ; c <= a ; $0 <= c - 3 * b ; c - 3 * b <= $2 ] ;
+   pi_poly := {{ $0 <= c <= a /\ $0 <= c - 3 * b <= $2 }} ;
    pi_schedule := [c - 3 * b ; b] ;
    pi_transformation := [c] ;
 |}.
