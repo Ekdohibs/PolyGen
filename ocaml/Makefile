@@ -11,7 +11,6 @@ OBJS:=$(shell $(MODORDER) test_extract.cmx)
 
 test: $(OBJS)
 	@echo "Linking $@"
-	@echo "Files: $+"
 	@$(OCAMLOPT) -o $@ $+
 
 include .depend
