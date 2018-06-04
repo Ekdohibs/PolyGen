@@ -65,6 +65,10 @@ $(OCAMLLEX_GENERATED_ML): %.ml: %.mll
 	@echo "OCAMLOPT $<"
 	@$(OCAMLOPT) -c -annot $<
 
+clean:
+	rm -f $(GENERATED)
+	for d in $(DIRS); do rm -f $$d/*.cm[iotx] $$d/*cmti $$d/*.o; done
+
 .depend: $(GENERATED)
 	@echo "Analyzing OCaml dependencies"
-	@$(OCAMLDEP) -slash $(INCLUDES) $(foreach d,$(DIRS),$(wildcard $(d)/*.ml $(d)/*.mli)) >.depend  || { rm -f .depend; exit 2; }
+	@$(OCAMLDEP) -slash $(INCLUDES) $(foreach d,$(DIRS),$(wildcard $(d)/*.ml $(d)/*.mli)) $(GENERATED) >.depend  || { rm -f .depend; exit 2; }
