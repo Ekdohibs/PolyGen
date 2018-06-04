@@ -12,12 +12,35 @@ Import ListNotations.
 
 Require Extraction.
 
+Set Extraction AccessOpaque.
+
+Extract Inlined Constant CoqAddOn.posPr => "CoqPr.posPr'".
+Extract Inlined Constant CoqAddOn.posPrRaw => "CoqPr.posPrRaw'".
+Extract Inlined Constant CoqAddOn.zPr => "CoqPr.zPr'".
+Extract Inlined Constant CoqAddOn.zPrRaw => "CoqPr.zPrRaw'".
+
+(*
+Extract Inlined Constant CoqAddOn.posPr => "(fun x -> Vpl.CoqPr.posPr' (Obj.magic x))".
+Extract Inlined Constant CoqAddOn.posPrRaw => "(fun x -> Vpl.CoqPr.posPrRaw' (Obj.magic x))".
+Extract Inlined Constant CoqAddOn.zPr => "(fun x -> Vpl.CoqPr.zPr' (Obj.magic x))".
+Extract Inlined Constant CoqAddOn.zPrRaw => "(fun x -> Vpl.CoqPr.zPrRaw' (Obj.magic x))".
+
+Extract Constant PedraQBackend.t => "Vpl.PedraQOracles.t".
+Extract Constant PedraQBackend.top => "Vpl.PedraQOracles.top".
+Extract Constant PedraQBackend.isEmpty => "(fun x -> Vpl.PedraQOracles.isEmpty (Obj.magic x))".
+Extract Constant PedraQBackend.add => "(fun x -> Vpl.PedraQOracles.add (Obj.magic x))".
+Extract Constant PedraQBackend.pr => "(fun x -> Vpl.PedraQOracles.pr (Obj.magic x))".
+*)
+
+Extract Inductive sumbool => "bool" [ "true" "false" ].
+
 Require Import ExtrOcamlBasic.
 Require Import ExtrOcamlString.
 
 Extract Inlined Constant instr => "int".
 
 Extraction Blacklist String List.
+Extraction Blacklist Misc. (* used by the VPL *)
 
 Axiom dummy : instr.
 Extract Inlined Constant dummy => "0".
@@ -119,4 +142,4 @@ Extraction Inline CoreAlarmed.Base.pure CoreAlarmed.Base.imp.
 
 Cd "extraction".
 
-Separate Extraction generate pi_elim_schedule test_pis(* test_pi_lex test_pi_generate *).
+Separate Extraction ZArith_dec generate pi_elim_schedule test_pis Ring_polynom_AddOnQ CstrLCF ProgVar LinTerm(* test_pi_lex test_pi_generate *).

@@ -1357,19 +1357,88 @@ End PolyProject.
 Module CoreAlarmed := AlarmImpureMonad Vpl.ImpureConfig.Core.
 Import CoreAlarmed.
 
+Ltac bind_imp_destruct H id1 id2 :=
+  apply mayReturn_bind in H; destruct H as [id1 [id2 H]].
+
+Module VplCanonizer <: PolyCanonizer CoreAlarmed.
+
+  Definition check_not_new n (l1 l2 : polyhedron) :=
+    (negb (forallb (fun c => nth n (fst c) 0 =? 0) l1)) || (forallb (fun c => nth n (fst c) 0 =? 0) l2).
+
+  Lemma check_not_new_correct :
+    forall n l1 l2, check_not_new n l1 l2 = true -> (forall c, In c l1 -> nth n (fst c) 0 = 0) -> (forall c, In c l2 -> nth n (fst c) 0 = 0).
+  Proof.
+    intros n l1 l2 H1 H2 c Hc.
+    unfold check_not_new in H1. reflect. destruct H1 as [H1 | H1].
+    - exfalso. eapply eq_true_false_abs; [|exact H1].
+      rewrite forallb_forall. intros c1; specialize (H2 c1). reflect; auto.
+    - rewrite forallb_forall in H1. specialize (H1 c). reflect; auto.
+  Qed.
+
+  Definition check_no_new_vars l1 l2 :=
+    let n := poly_nrl l2 in
+    forallb (fun n => check_not_new n l1 l2) (n_range n).
+
+  Lemma check_no_new_vars_correct :
+    forall n l1 l2, check_no_new_vars l1 l2 = true -> (forall c, In c l1 -> nth n (fst c) 0 = 0) -> (forall c, In c l2 -> nth n (fst c) 0 = 0).
+  Proof.
+    intros n l1 l2 H.
+    destruct (n <? poly_nrl l2)%nat eqn:Hn; reflect.
+    - apply check_not_new_correct.
+      unfold check_no_new_vars in H. rewrite forallb_forall in H.
+      apply H. rewrite n_range_in. auto.
+    - intros H1 c Hc. rewrite <- poly_nrl_def in Hn. specialize (Hn c Hc).
+      eapply nth_eq in Hn; rewrite Hn. rewrite nth_resize.
+      destruct (n <? n)%nat eqn:Hn2; reflect; auto; lia.
+  Qed.
+
+  Definition canonize l :=
+    BIND r <- lift (canonize_Cs (poly_to_Cs l)) -;
+    pure match Cs_to_poly_Q r with
+    | None => l
+    | Some l2 =>
+        if check_no_new_vars l l2 then l2 else l
+  end.
+
+  Lemma canonize_correct :
+    forall p, WHEN r <- canonize p THEN (forall k v, 0 < k -> in_poly v (expand_poly k r) = in_poly v (expand_poly k p)).
+  Proof.
+    intros l l2 Hl2 k v Hk.
+    unfold canonize in Hl2. bind_imp_destruct Hl2 r Hr.
+    apply mayReturn_lift in Hr. apply mayReturn_pure in Hl2.
+    destruct (Cs_to_poly_Q r) as [u|] eqn:Hu; [|congruence].
+    destruct (check_no_new_vars l u); [|congruence].
+    apply eq_iff_eq_true.
+    rewrite <- poly_to_Cs_correct_Q with (p := l) by auto.
+    rewrite (canonize_Cs_correct _ _ Hr _).
+    rewrite (Cs_to_poly_Q_correct _ _ _ _ Hk Hu).
+    rewrite Hl2. reflexivity.
+  Qed.
+
+  Lemma canonize_no_new_var :
+    forall k p, (forall c, In c p -> nth k (fst c) 0 = 0) -> WHEN r <- canonize p THEN (forall c, In c r -> nth k (fst c) 0 = 0).
+  Proof.
+    intros k l H l2 Hl2.
+    unfold canonize in Hl2. bind_imp_destruct Hl2 r Hr. apply mayReturn_pure in Hl2.
+    destruct (Cs_to_poly_Q r) as [u|]; [|rewrite <- Hl2; auto].
+    destruct (check_no_new_vars l u) eqn:Hchk; [|rewrite <- Hl2; auto].
+    rewrite <- Hl2. eapply check_no_new_vars_correct; eauto.
+  Qed.
+
+End VplCanonizer.
+
 (*
 Module PPS := PolyProjectSimple CoreAlarmed.
 Import PPS.
 *)
 
 Module Proj := FourierMotzkinProject CoreAlarmed.
-Module Canon := NaiveCanonizer CoreAlarmed.
+(* Module Canon := NaiveCanonizer CoreAlarmed. *)
+Module Canon := VplCanonizer.
 Module PO := PolyProjectImpl CoreAlarmed Canon Proj.
 Import PO.
 
 Global Opaque project.
-Ltac bind_imp_destruct H id1 id2 :=
-  apply mayReturn_bind in H; destruct H as [id1 [id2 H]].
 
 (** * Generating the code *)
 

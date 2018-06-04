@@ -917,3 +917,141 @@ Proof.
     f_equiv.
     rewrite <- IHp; [reflexivity|auto|unfold Cs_to_poly_Q; rewrite H2; reflexivity].
 Qed.
+
+Require Import Vpl.DomainInterfaces.
+
+Module AssertCstrD (Import D: WeakAbstractDomain QNum Cstr) <: HasAssert QNum Cstr D.
+
+  Open Scope impure.
+
+  Definition assert (c : Cstr.t) (a : t) :=
+    match Cstr.typ c with
+    | LtT => BIND aux <- assume (Cstr.lowerOrEqualsToCstr (Cstr.coefs c) (Cstr.cst c)) a -; isBottom aux
+    | LeT => BIND aux <- assume (Cstr.lowerToCstr (Cstr.coefs c) (Cstr.cst c)) a -; isBottom aux
+    | EqT => BIND aux1 <- assume (Cstr.lowerToCstr (Cstr.coefs c) (Cstr.cst c)) a -;
+            BIND u <- isBottom aux1 -;
+            if negb u then pure false else
+            BIND aux2 <- assume (Cstr.upperToCstr (Cstr.coefs c) (Cstr.cst c)) a -;
+            isBottom aux2
+    end.
+
+  Lemma assert_correct (c : Cstr.t) (a : t) : If assert c a THEN forall m, gamma a m -> Cstr.sat c m.
+  Proof.
+    unfold assert, Cstr.sat; destruct (Cstr.typ c) eqn:Htyp; VPLAsimplify.
+    - intros H4 m H5.
+      evar (x : QNum.t); evar (y : QNum.t). destruct (QNum.dec x y) as [[Heq | Heq] | Heq]; [| |exact Heq]; exfalso.
+      + apply (H3 m). apply (H2 m); auto.
+      + rewrite QNum.OppLt in Heq. apply (H0 m). apply (H m); auto. unfold Cstr.lowerToCstr, Cstr.sat. simpl.
+        rewrite LinQ.Opp_correct. exact Heq.
+    - intros H1 m H2. apply QNum.LeNotLt. intros Hneq.
+      rewrite QNum.OppLt in Hneq.
+      apply (H0 m); apply H; auto.
+      unfold Cstr.lowerToCstr, Cstr.sat. simpl; rewrite LinQ.Opp_correct; auto.
+    - intros H1 m H2. apply QNum.LtNotLe. intros Hneq.
+      rewrite QNum.OppLe in Hneq.
+      apply (H0 m); apply H; auto.
+      unfold Cstr.lowerToCstr, Cstr.sat. simpl; rewrite LinQ.Opp_correct; auto.
+  Qed.
+
+  Close Scope impure.
+
+End AssertCstrD.
+
+Require Import Vpl.PedraQ.
+Module CstrWeakDomain := BasicD <+ CstrD.
+Module CstrDomain <: AbstractDomain QNum Cstr := CstrWeakDomain <+ AssertCstrD CstrWeakDomain.
+
+Module ExactCs.
+
+  Import CstrDomain.
+  Open Scope impure.
+
+  Fixpoint fromCs_unchecked l :=
+    match l with
+    | nil => pure top
+    | c :: l => BIND r <- fromCs_unchecked l -; assume c r
+    end.
+
+  Fixpoint checkCs p l :=
+    match l with
+    | nil => pure true
+    | c :: l => BIND r <- assert c p -; if r then checkCs p l else pure false
+    end.
+
+  Lemma fromCs_unchecked_correct :
+    forall l, WHEN p <- fromCs_unchecked l THEN forall m, Cs.sat l m -> gamma p m.
+  Proof.
+    induction l.
+    - intros p Hp m Hm; simpl in *. apply mayReturn_pure in Hp; rewrite <- Hp in *.
+      apply top_correct.
+    - intros p Hp m Hm; simpl in *. apply mayReturn_bind in Hp; destruct Hp as [q [Hq Hp]].
+      eapply assume_correct; [exact Hp|tauto|].
+      eapply IHl; tauto.
+  Qed.
+
+  Lemma checkCs_correct :
+    forall l p, If checkCs p l THEN forall m, gamma p m -> Cs.sat l m.
+  Proof.
+    induction l.
+    - intros p b Hb. apply mayReturn_pure in Hb. rewrite <- Hb. simpl.
+      auto.
+    - intros p b Hb. simpl in Hb. apply mayReturn_bind in Hb; destruct Hb as [b2 [Hb2 Hb]].
+      destruct b2.
+      + destruct b; simpl; auto. intros m Hm; split.
+        * eapply (assert_correct _ _ _ Hb2); auto.
+        * eapply (IHl _ _ Hb); auto.
+      + apply mayReturn_pure in Hb; rewrite <- Hb; simpl; auto.
+  Qed.
+
+  Definition fromCs l :=
+    BIND r <- fromCs_unchecked l -;
+    BIND b <- checkCs r l -;
+    if b then pure (Some r) else pure None.
+
+  Lemma fromCs_correct :
+    forall l p, mayReturn (fromCs l) (Some p) -> forall m, gamma p m <-> Cs.sat l m.
+  Proof.
+    intros l p H m. unfold fromCs in H.
+    apply mayReturn_bind in H; destruct H as [r [Hr H]].
+    apply mayReturn_bind in H; destruct H as [b [Hb H]].
+    destruct b; apply mayReturn_pure in H; [|congruence]. injection H as H; rewrite H in *.
+    split.
+    - eapply (checkCs_correct _ _ _ Hb).
+    - eapply (fromCs_unchecked_correct _ _ Hr).
+  Qed.
+
+  Definition toCs p :=
+    match p with
+    | None => {| Cstr.coefs := LinQ.nil ; Cstr.typ := EqT ; Cstr.cst := QNum.u |} :: nil
+    | Some p => p.(cons)
+    end.
+
+  Lemma toCs_correct :
+    forall p m, gamma p m <-> Cs.sat (toCs p) m.
+  Proof.
+    intros p m. destruct p as [p|].
+    - reflexivity.
+    - simpl; unfold Cstr.sat; simpl. rewrite LinQ.NilEval.
+      split; [tauto|]. intros [H1 H2]; apply QNum.ZNotU; auto.
+  Qed.
+
+End ExactCs.
+
+Definition canonize_Cs l :=
+  BIND r <- ExactCs.fromCs l -;
+  match r with
+  | None => pure l
+  | Some r => pure (ExactCs.toCs r)
+  end.
+
+Lemma canonize_Cs_correct :
+  forall l, WHEN r <- canonize_Cs l THEN forall m, Cs.sat l m <-> Cs.sat r m.
+Proof.
+  intros l r Hr m. unfold canonize_Cs in Hr.
+  apply mayReturn_bind in Hr; destruct Hr as [u [Hu Hr]].
+  destruct u as [u|].
+  - rewrite <- (ExactCs.fromCs_correct _ _ Hu).
+    apply mayReturn_pure in Hr; rewrite <- Hr.
+    apply ExactCs.toCs_correct.
+  - apply mayReturn_pure in Hr; rewrite <- Hr; reflexivity.
+Qed.

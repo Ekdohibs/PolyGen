@@ -2,7 +2,7 @@
 
 COQDOCOPTS=-g --html
 
-COQINCLUDES=
+COQINCLUDES=-R VPL/coq/ Vpl
 COQC="$(COQBIN)coqc" -q $(COQINCLUDES) $(COQCOPTS)
 COQ2HTML=coq2html
 COQDEP="$(COQBIN)coqdep" $(COQINCLUDES)
@@ -15,6 +15,9 @@ Extraction.vo: $(FILES:.v=.vo) Extraction.v
 	mkdir -p extraction
 	$(COQC) Extraction.v
 	rm extraction/ImpureConfig.mli
+#	rm extraction/*.mli
+#	tools/fix_extract.sh extraction/PedraQBackend.ml
+#	cp extraction/PedraQBackend.ml.1 extraction/PedraQBackend.ml
 
 %.vo: %.v
 	@rm -f doc/$(*F).glob
@@ -33,7 +36,11 @@ all: proof documentation
 
 extract: Extraction.vo
 
+vplsetup:
+	cp -f VPL/ocaml/src/Wrapper_no_glpk.ml VPL/ocaml/src/Wrapper.ml
+
 ocaml: extract
+	rm -f ocaml/.depend
 	$(MAKE) -C ocaml .depend
 	$(MAKE) -C ocaml
 
