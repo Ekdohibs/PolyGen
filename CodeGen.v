@@ -388,9 +388,14 @@ Module Type PolyProject (Import Imp: FullImpureMonad).
 
   Parameter project_constraint_size :
     forall n pol c, WHEN proj <- project (n, pol) THEN In c proj -> fst c =v= resize n (fst c).
-
+(*
+  Parameter project_invariant_reduce :
+    forall n pol1 pol2 p, (forall v, in_poly v pol2 = true -> in_poly v pol1 = true) ->
+                     project_invariant n pol1 p -> in_poly p pol2 = true -> project_invariant n pol2 p.
+*)
 End PolyProject.
 
+(*
 Module PolyProjectSimple (Import Imp: FullAlarmedMonad) <: PolyProject Imp.
 
   Parameter untrusted_project : nat -> polyhedron -> (polyhedron * list witness)%type.
@@ -526,6 +531,7 @@ Module PolyProjectSimple (Import Imp: FullAlarmedMonad) <: PolyProject Imp.
   Qed.
 
 End PolyProjectSimple.
+ *)
 
 Module Type PolyCanonizer (Import Imp: FullImpureMonad).
 
@@ -1426,6 +1432,96 @@ Module VplCanonizer <: PolyCanonizer CoreAlarmed.
   Qed.
 
 End VplCanonizer.
+
+Fixpoint list_gcd l :=
+  match l with
+  | nil => 0
+  | x :: l => Z.gcd x (list_gcd l)
+  end.
+
+Lemma list_gcd_nonneg :
+  forall l, 0 <= list_gcd l.
+Proof.
+  destruct l.
+  - simpl; lia.
+  - simpl. apply Z.gcd_nonneg.
+Qed.
+
+Lemma list_gcd_div :
+  forall l x, In x l -> (list_gcd l | x).
+Proof.
+  induction l.
+  - intros; simpl in *; tauto.
+  - intros x [Ha | Hx].
+    + rewrite <- Ha. simpl. apply Z.gcd_divide_l.
+    + transitivity (list_gcd l).
+      * simpl; apply Z.gcd_divide_r.
+      * auto.
+Qed.
+
+Module VplCanonizerZ.
+
+  Definition canonize_constraint_Z (c : list Z * Z) :=
+    let g := list_gcd (fst c) in
+    if (g =? 0) then c
+    else (map (fun x => x / g) (fst c), (snd c / g)).
+
+  Lemma canonize_constraint_Z_correct :
+    forall c p, satisfies_constraint p (canonize_constraint_Z c) = satisfies_constraint p c.
+  Proof.
+    intros c p. unfold canonize_constraint_Z.
+    remember (list_gcd (fst c)) as g. destruct (g =? 0) eqn:Hg; auto.
+    reflect. unfold satisfies_constraint; rewrite eq_iff_eq_true; reflect.
+    assert (Hpos : 0 < g) by (generalize (list_gcd_nonneg (fst c)); lia).
+    simpl.
+    rewrite div_ge_iff by auto. f_equiv.
+    rewrite <- Z.mul_comm, <- dot_product_mult_right. f_equal.
+    unfold mult_vector. rewrite map_map.
+    erewrite map_ext_in; [apply map_id|]. intros x Hx. simpl.
+    symmetry; apply Znumtheory.Zdivide_Zdiv_eq; [auto|].
+    rewrite Heqg; apply list_gcd_div. auto.
+  Qed.
+
+  Lemma canonize_constraint_Z_no_new_var :
+    forall k c, nth k (fst c) 0 = 0 -> nth k (fst (canonize_constraint_Z c)) 0 = 0.
+  Proof.
+    intros k c H. unfold canonize_constraint_Z.
+    destruct (list_gcd (fst c) =? 0); auto. simpl.
+    transitivity (nth k (fst c) 0 / (list_gcd (fst c))).
+    - rewrite <- map_nth with (f := fun x => x / list_gcd (fst c)). auto.
+    - rewrite H. auto.
+  Qed.
+
+  Definition canonize l :=
+    BIND r <- VplCanonizer.canonize (map canonize_constraint_Z l) -;
+    pure (map canonize_constraint_Z r).
+
+  Lemma canonize_correct :
+    forall p, WHEN r <- canonize p THEN (forall v, in_poly v r = in_poly v p).
+  Proof.
+    intros l l2 Hl2 v.
+    unfold canonize in Hl2. bind_imp_destruct Hl2 r Hr.
+    apply mayReturn_pure in Hl2. apply VplCanonizer.canonize_correct in Hr.
+    specialize (Hr 1 v). rewrite !expand_poly_1 in Hr.
+    rewrite <- Hl2. unfold in_poly in *. rewrite forallb_map in *.
+    erewrite forallb_ext; [|intros; rewrite canonize_constraint_Z_correct; reflexivity].
+    rewrite Hr by lia.
+    apply forallb_ext. intros; apply canonize_constraint_Z_correct.
+  Qed.
+
+  Lemma canonize_no_new_var :
+    forall k p, (forall c, In c p -> nth k (fst c) 0 = 0) -> WHEN r <- canonize p THEN (forall c, In c r -> nth k (fst c) 0 = 0).
+  Proof.
+    intros k l H l2 Hl2.
+    unfold canonize in Hl2. bind_imp_destruct Hl2 r Hr. apply mayReturn_pure in Hl2.
+    apply VplCanonizer.canonize_no_new_var with (k := k) in Hr.
+    - intros c Hc. rewrite <- Hl2 in Hc. rewrite in_map_iff in Hc.
+      destruct Hc as [c1 [Hc1 Hin1]]; rewrite <- Hc1; apply canonize_constraint_Z_no_new_var; auto.
+    - intros c Hc; rewrite in_map_iff in Hc.
+      destruct Hc as [c1 [Hc1 Hin1]]; rewrite <- Hc1; apply canonize_constraint_Z_no_new_var; auto.
+  Qed.
+
+End VplCanonizerZ.
 
 (*
 Module PPS := PolyProjectSimple CoreAlarmed.
