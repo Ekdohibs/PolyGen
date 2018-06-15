@@ -1097,6 +1097,16 @@ Proof.
   f_equal. f_equal. f_equal. f_equal. lia.
 Qed.
 
+Lemma assign_assign :
+  forall n x y v, assign n x (assign n y v) = assign n x v.
+Proof.
+  intros n x y v. unfold assign.
+  rewrite resize_app by (apply resize_length).
+  rewrite skipn_app_le by (rewrite resize_length; lia).
+  rewrite resize_length. replace (S n - n)%nat with 1%nat by lia.
+  reflexivity.
+Qed.
+
 
 (** * Expanding polyhedra *)
 

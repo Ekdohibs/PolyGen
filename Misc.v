@@ -19,6 +19,24 @@ Proof.
   intros. induction l; simpl; auto; congruence.
 Qed.
 
+Lemma forallb_exists :
+  forall A f (l : list A), forallb f l = false <-> exists x, In x l /\ f x = false.
+Proof.
+  intros A f. induction l.
+  - intros; simpl. split; [congruence | intros [x Hx]; tauto].
+  - simpl. rewrite andb_false_iff, IHl.
+    destruct (f a) eqn:Hfa; firstorder congruence.
+Qed.
+
+Lemma existsb_forall :
+  forall A f (l : list A), existsb f l = false <-> forall x, In x l -> f x = false.
+Proof.
+  intros A f. induction l.
+  - simpl; tauto.
+  - simpl. rewrite orb_false_iff, IHl.
+    destruct (bool_dec (f a) false); firstorder congruence. 
+Qed.
+
 Lemma skipn_skipn :
   forall A n m (l : list A), skipn n (skipn m l) = skipn (n + m)%nat l.
 Proof.

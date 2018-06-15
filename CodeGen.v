@@ -27,14 +27,6 @@ Open Scope list_scope.
 (* TODO *)
 Parameter split_polys : list polyhedron -> result (list (polyhedron * list nat)%type).
 
-Definition poly_disjoint pol1 pol2 := forall p, in_poly p pol1 = false \/ in_poly p pol2 = false.
-
-Fixpoint all_disjoint (l : list polyhedron) :=
-  match l with
-  | nil => True
-  | p :: l => (forall p2, In p2 l -> poly_disjoint p p2) /\ all_disjoint l
-  end.
-
 Axiom split_poly_disjoint :
   forall pl r, split_polys pl = Ok r -> all_disjoint (map fst r).
 
@@ -565,6 +557,43 @@ Module NaiveCanonizer(Import Imp: FullImpureMonad) <: PolyCanonizer Imp.
 
 End NaiveCanonizer.
 
+Definition isExactProjection n pol proj :=
+  forall p s, 0 < s -> in_poly p (expand_poly s proj) = true <->
+                 exists t k, 0 < t /\ in_poly (assign n k (mult_vector t p)) (expand_poly (s * t) pol) = true.
+
+Definition isExactProjection1 n pol proj :=
+  forall p, in_poly p proj = true <-> exists t k, 0 < t /\ in_poly (assign n k (mult_vector t p)) (expand_poly t pol) = true.
+
+Lemma isExactProjection_weaken1 :
+  forall n pol proj, isExactProjection n pol proj -> isExactProjection1 n pol proj.
+Proof.
+  intros n pol proj H p.
+  specialize (H p 1). rewrite expand_poly_1 in H; rewrite H by lia. 
+  split; intros [t [k Htk]]; exists t; exists k; rewrite Z.mul_1_l in *; auto.
+Qed.
+
+Lemma isExactProjection_assign :
+  forall n p x t pol proj, 0 < t -> isExactProjection n pol proj -> in_poly p (expand_poly t pol) = true ->
+                      in_poly (assign n x p) (expand_poly t proj) = true.
+Proof.
+  intros n p x t pol proj Ht Hproj Hpol.
+  rewrite (Hproj _ t) by lia. exists 1. exists (nth n p 0). split; [lia|].
+  rewrite <- Hpol. f_equiv; [|f_equal; lia].
+  rewrite mult_vector_1. rewrite assign_assign.
+  apply assign_id.
+Qed.
+
+Lemma isExactProjection_assign_1 :
+  forall n p x pol proj, isExactProjection1 n pol proj -> in_poly p pol = true ->
+                      in_poly (assign n x p) proj = true.
+Proof.
+  intros n p x pol proj Hproj Hpol.
+  rewrite (Hproj _) by lia. exists 1. exists (nth n p 0). split; [lia|].
+  rewrite <- Hpol. rewrite expand_poly_1. f_equiv.
+  rewrite mult_vector_1. rewrite assign_assign.
+  apply assign_id.
+Qed.
+
 Module Type ProjectOperator (Import Imp: FullImpureMonad).
 
   Parameter project : (nat * polyhedron) -> imp polyhedron.
@@ -576,10 +605,7 @@ Module Type ProjectOperator (Import Imp: FullImpureMonad).
     forall n k pol, (forall c, In c pol -> nth k (fst c) 0 = 0) -> WHEN proj <- project (n, pol) THEN (forall c, In c proj -> nth k (fst c) 0 = 0).
 
   Parameter project_in_iff :
-    forall n p pol s, 0 < s ->
-                 WHEN proj <- project (n, pol) THEN
-                      in_poly p (expand_poly s proj) = true <->
-                 exists t k, 0 < t /\ in_poly (assign n k (mult_vector t p)) (expand_poly (s * t) pol) = true.
+    forall n pol, WHEN proj <- project (n, pol) THEN isExactProjection n pol proj.
 
 End ProjectOperator.
 
@@ -750,10 +776,9 @@ Module FourierMotzkinProject (Import Imp: FullImpureMonad) <: ProjectOperator Im
   Definition project np := pure (pure_project (fst np) (snd np)).
 
   Theorem pure_project_in_iff :
-    forall n p pol s, 0 < s -> in_poly p (expand_poly s (pure_project n pol)) = true <->
-                         exists t k, 0 < t /\ in_poly (assign n k (mult_vector t p)) (expand_poly (s * t) pol) = true.
+    forall n pol, isExactProjection n pol (pure_project n pol).
   Proof.
-    intros n p pol s Hs.
+    intros n pol p s Hs.
     rewrite is_projected_separate by auto.
     unfold pure_project. rewrite expand_poly_app, in_poly_app, andb_true_iff.
     f_equiv. unfold in_poly, expand_poly.
@@ -771,12 +796,9 @@ Module FourierMotzkinProject (Import Imp: FullImpureMonad) <: ProjectOperator Im
   Qed.
 
   Theorem project_in_iff :
-    forall n p pol s, 0 < s ->
-                 WHEN proj <- project (n, pol) THEN
-                      in_poly p (expand_poly s proj) = true <->
-                 exists t k, 0 < t /\ in_poly (assign n k (mult_vector t p)) (expand_poly (s * t) pol) = true.
+    forall n pol, WHEN proj <- project (n, pol) THEN isExactProjection n pol proj.
   Proof.
-    intros n p pol s Hs proj Hproj.
+    intros n pol proj Hproj.
     unfold project in Hproj. apply mayReturn_pure in Hproj. simpl in Hproj. rewrite <- Hproj.
     apply pure_project_in_iff; auto.
   Qed.
@@ -905,7 +927,7 @@ Module PolyProjectImpl (Import Imp: FullImpureMonad) (Canon : PolyCanonizer Imp)
       rewrite (IHk s d p canon Hs proj Hproj).
       split; intros [t [m [Hmlen [Ht Hin]]]]; assert (Hst : 0 < s * t) by nia.
       + rewrite (Canon.canonize_correct proja) in Hin by auto.
-        rewrite (Proj.project_in_iff _ _ _ _ Hst _ Hproja) in Hin.
+        rewrite (Proj.project_in_iff _ _ _ Hproja _ _ Hst) in Hin.
         destruct Hin as [r [u [Hr Hin]]].
         exists (t * r). exists (mult_vector r m ++ (u :: nil)).
         split; [rewrite app_length, mult_vector_length, Nat.add_1_r; auto|].
@@ -922,7 +944,7 @@ Module PolyProjectImpl (Import Imp: FullImpureMonad) (Canon : PolyCanonizer Imp)
       + exists t. exists (resize k m). split; [apply resize_length|].
         split; [auto|].
         rewrite (Canon.canonize_correct proja) by auto.
-        rewrite (Proj.project_in_iff _ _ _ _ Hst _ Hproja).
+        rewrite (Proj.project_in_iff _ _ _ Hproja _ _ Hst).
         exists 1. exists (nth k m 0).
         split; [lia|].
         rewrite mult_vector_1. rewrite <- Hin.
@@ -1188,178 +1210,6 @@ Module PolyProjectImpl (Import Imp: FullImpureMonad) (Canon : PolyCanonizer Imp)
 
 End PolyProjectImpl.
 
-(*
-Module PolyProjectSimplifier (Import Imp: FullImpureMonad) (Base : PolyProject Imp) <: PolyProject Imp.
-
-  Fixpoint simplify_poly (n : nat) (p : polyhedron) :=
-    match n with
-    | 0%nat => p
-    | S n =>
-      let nz := filter (fun c => negb (nth n (fst c) 0 =? 0)) p in
-      let z := filter (fun c => nth n (fst c) 0 =? 0) p in
-      match find_eq n nz with
-      | None => nz ++ simplify_poly n z
-      | Some c => c :: mult_constraint (-1) c ::
-                   simplify_poly n (map (fun c1 => make_constraint_with_eq n c c1) nz ++ z)
-      end
-    end.
-
-  Lemma simplify_poly_correct :
-    forall n pol p, in_poly p (simplify_poly n pol) = in_poly p pol.
-  Proof.
-    induction n.
-    - intros; simpl; reflexivity.
-    - intros pol p. simpl.
-      set (nz := filter (fun c => negb (nth n (fst c) 0 =? 0)) pol).
-      set (z := filter (fun c => nth n (fst c) 0 =? 0) pol).
-      transitivity (in_poly p nz && in_poly p z).
-      + destruct (find_eq n nz) as [c|] eqn:Hfindeq.
-        * unfold in_poly in *. simpl. rewrite IHn. rewrite andb_assoc.
-          replace (satisfies_constraint p c && satisfies_constraint p (mult_constraint (-1) c)) with (dot_product p (fst c) =? snd c)
-            by (unfold satisfies_constraint, mult_constraint; simpl; rewrite eq_iff_eq_true, dot_product_mult_right; reflect; lia).
-          assert (Hcnth : nth n (fst c) 0 <> 0) by (apply find_eq_nth in Hfindeq; lia).
-          destruct (dot_product p (fst c) =? snd c) eqn:Heq; simpl; reflect.
-          -- rewrite forallb_app, forallb_map. f_equal. apply forallb_ext.
-             intros c1. rewrite make_constraint_with_eq_correct; auto.
-          -- destruct (forallb (satisfies_constraint p) nz) eqn:Hin; simpl; [|reflexivity]. exfalso; apply Heq.
-             rewrite forallb_forall in Hin.
-             eapply find_eq_correct; eauto.
-        * rewrite in_poly_app. rewrite IHn. reflexivity.
-      + rewrite eq_iff_eq_true. reflect. unfold in_poly, nz, z; rewrite !forallb_forall.
-        split.
-       * intros [H1 H2] c Hc; specialize (H1 c); specialize (H2 c).
-         rewrite filter_In in H1, H2. destruct (nth n (fst c) 0 =? 0); auto.
-       * intros H. split; intros c Hcin; rewrite filter_In in Hcin; apply H; tauto.
-  Qed.
-
-  Lemma simplify_poly_preserve_zeros :
-    forall n m pol, (forall c, In c pol -> nth m (fst c) 0 = 0) -> (forall c, In c (simplify_poly n pol) -> nth m (fst c) 0 = 0).
-  Proof.
-    induction n.
-    - intros; auto.
-    - intros m pol H c Hc.
-      simpl in Hc.
-      set (nz := filter (fun c => negb (nth n (fst c) 0 =? 0)) pol) in *.
-      set (z := filter (fun c => nth n (fst c) 0 =? 0) pol) in *.
-      destruct (find_eq n nz) as [c1|] eqn:Hfindeq.
-      + simpl in Hc.
-        assert (Hc1 : nth m (fst c1) 0 = 0) by (apply find_eq_in in Hfindeq; apply H; unfold nz in Hfindeq; rewrite filter_In in Hfindeq; tauto).
-        destruct Hc as [Hc | [Hc | Hc]];
-          [rewrite <- Hc; auto | rewrite <- Hc; unfold mult_constraint; simpl; rewrite mult_nth; lia|].
-        eapply IHn; [|apply Hc].
-        intros c2 Hin2; rewrite in_app_iff, in_map_iff in Hin2.
-        destruct Hin2 as [[c3 [Heq2 Hin3]] | Hin2]; [|apply H; unfold z in Hin2; rewrite filter_In in Hin2; tauto].
-        rewrite <- Heq2, make_constraint_with_eq_preserve_zeros; auto. apply H.
-        unfold nz in Hin3; rewrite filter_In in Hin3; tauto.
-      + rewrite in_app_iff in Hc.
-        destruct Hc as [Hc | Hc]; [apply H; unfold nz in Hc; rewrite filter_In in Hc; tauto|].
-        eapply IHn; [|apply Hc]. intros c1 Hc1; apply H; unfold z in Hc1; rewrite filter_In in Hc1; tauto.
-  Qed.
-
-  (*
-  Lemma simplify_poly_correct_nz :
-    forall n pol p, (forall c, In c pol -> nth n (fst c) 0 <> 0 -> satisfies_constraint p c = true) ->
-               (forall c, In c (simplify_poly (S n) pol) -> nth n (fst c) 0 <> 0 -> satisfies_constraint p c = true).
-  Proof.
-    intros n pol p H c Hcin Hcn.
-    simpl in Hcin.
-    set (nz := filter (fun c => negb (nth n (fst c) 0 =? 0)) pol) in *.
-    set (z := filter (fun c => nth n (fst c) 0 =? 0) pol) in *.
-    destruct (find_eq n nz) as [c1|] eqn:Hfindeq.
-    - simpl in Hcin.
-      assert (Heq : dot_product p (fst c1) = snd c1)
-        by (eapply find_eq_correct; [apply Hfindeq|]; intros c2 Hc2 Hcn2; unfold nz in Hc2; rewrite filter_In in Hc2; apply H; tauto).
-      destruct Hcin as [Hcin | [Hcin | Hcin]]; [rewrite <- Hcin|rewrite <- Hcin|]; unfold satisfies_constraint; reflect;
-        [lia|unfold mult_constraint; simpl; rewrite dot_product_mult_right; lia|].
-      exfalso. apply Hcn. eapply simplify_poly_preserve_zeros; [|apply Hcin].
-      intros c2 Hc2. rewrite in_app_iff, in_map_iff in Hc2.
-      destruct Hc2 as [[c3 [Heq2 Hc3]] | Hc2]; [|unfold z in Hc2; rewrite filter_In in Hc2; reflect; tauto].
-      rewrite <- Heq2. apply make_constraint_with_eq_nth. apply find_eq_nth in Hfindeq; lia.
-    - rewrite in_app_iff in Hcin. destruct Hcin as [Hcin | Hcin].
-      + apply H; [|auto]. unfold nz in Hcin; rewrite filter_In in Hcin; tauto.
-      + exfalso; apply Hcn. eapply simplify_poly_preserve_zeros; [|apply Hcin].
-        intros c1 Hc1; unfold z in Hc1; rewrite filter_In in Hc1; reflect; tauto.
-  Qed.
-   *)
-
-  Lemma simplify_poly_correct_nz :
-    forall n pol p, (forall c, In c pol -> nth n (fst c) 0 = 0 -> satisfies_constraint p c = true) ->
-               (forall c, In c (simplify_poly (S n) pol) -> nth n (fst c) 0 <> 0 -> satisfies_constraint p c = true) ->
-               (forall c, In c pol -> nth n (fst c) 0 <> 0 -> satisfies_constraint p c = true).
-  Proof.
-    intros n pol p Hz Hnz c Hcin Hcn.
-    simpl in Hnz.
-    set (nz := filter (fun c => negb (nth n (fst c) 0 =? 0)) pol) in *.
-    set (z := filter (fun c => nth n (fst c) 0 =? 0) pol) in *.
-    destruct (find_eq n nz) as [ceq|] eqn:Hfindeq.
-    - assert (Hceqn : nth n (fst ceq) 0 <> 0) by (generalize (find_eq_nth _ _ _ Hfindeq); lia).
-      assert (Heq : dot_product p (fst ceq) = snd ceq). {
-        generalize (Hnz ceq); generalize (Hnz (mult_constraint (-1) ceq)).
-        unfold mult_constraint, satisfies_constraint; simpl.
-        rewrite mult_nth, dot_product_mult_right; reflect.
-        clear Hnz Hz. firstorder.
-      }
-(*      specialize (Hnz (make_constraint_with_eq n ceq c) *) admit.
-    - apply Hnz; [|auto]. rewrite in_app_iff; left. unfold nz.
-      rewrite filter_In; reflect; auto.
-  Admitted.
-
-  Definition project np :=
-    BIND r <- Base.project np -; pure (simplify_poly (fst np) r).
-
-  Lemma project_inclusion :
-    forall n p pol, in_poly p pol = true -> WHEN proj <- project (n, pol) THEN in_poly (resize n p) proj = true.
-  Proof.
-    intros n p pol Hin. do 3 xastep eauto. simpl.
-    rewrite simplify_poly_correct.
-    eapply Base.project_inclusion in Hexta; eauto.
-  Qed.
-
-  Definition project_invariant := Base.project_invariant.
-
-  Lemma project_invariant_inclusion :
-    forall n pol p, in_poly p pol = true -> project_invariant n pol (resize n p).
-  Proof.
-    apply Base.project_invariant_inclusion.
-  Qed.
-
-  Lemma project_id :
-    forall n pol p, (forall c, In c pol -> fst c =v= resize n (fst c)) -> project_invariant n pol p -> in_poly p pol = true.
-  Proof.
-    apply Base.project_id.
-  Qed.
-
-  Axiom is_exact_projection :
-    forall v p n, project_invariant n p v <-> exists t m, 0 < t /\ in_poly (resize n (mult_vector t v) ++ m) (expand_poly t p) = true.
-
-  Lemma project_next_r_inclusion :
-    forall n pol p, project_invariant n pol p ->
-               WHEN proj <- project (S n, pol) THEN
-               (forall c, In c proj -> nth n (fst c) 0 <> 0 -> satisfies_constraint p c = true) ->
-                 project_invariant (S n) pol p.
-  Proof.
-    intros n pol p Hinv. do 3 xastep eauto.
-    intros H. 
-    eapply Base.project_next_r_inclusion in Hexta; eauto.
-    apply Hexta. unfold project_invariant in Hinv.
-    intros. eapply simplify_poly_correct_nz. ; [exact H| |auto].
-    eapply simplify_poly_correct_nz in H.
-    intros c Hc Hnc; apply H; [|apply Hnc].
-
-  Parameter project_invariant_resize :
-    forall n pol p, project_invariant n pol p <-> project_invariant n pol (resize n p).
-
-  Parameter project_invariant_export : nat * polyhedron -> imp polyhedron.
-
-  Parameter project_invariant_export_correct :
-    forall n p pol, WHEN res <- project_invariant_export (n, pol) THEN in_poly p res = true <-> project_invariant n pol p.
-
-  Parameter project_constraint_size :
-    forall n pol c, WHEN proj <- project (n, pol) THEN In c proj -> fst c =v= resize n (fst c).
-
-End PolyProject.
-*)
-
 Module CoreAlarmed := AlarmImpureMonad Vpl.ImpureConfig.Core.
 Import CoreAlarmed.
 
@@ -1523,10 +1373,154 @@ Module VplCanonizerZ.
 
 End VplCanonizerZ.
 
+Definition neg_constraint c :=
+  (mult_vector (-1) (fst c), -snd c - 1).
+Lemma neg_constraint_correct :
+  forall p c, satisfies_constraint p (neg_constraint c) = negb (satisfies_constraint p c).
+Proof.
+  intros p c. unfold satisfies_constraint.
+  apply eq_iff_eq_true. reflect. unfold neg_constraint.
+  simpl. rewrite dot_product_mult_right. lia.
+Qed.
+
+Fixpoint poly_difference p1 p2 :=
+  match p2 with
+  | nil => nil
+  | c :: p2 => (neg_constraint c :: p1) :: poly_difference (c :: p1) p2
+  end.
+
+Lemma poly_difference_def :
+  forall p2 p1 v, existsb (in_poly v) (poly_difference p1 p2) =
+             in_poly v p1 && negb (in_poly v p2).
+Proof.
+  induction p2.
+  - intros p1 v. simpl. destruct in_poly; auto.
+  - intros p1 v. simpl. rewrite IHp2.
+    rewrite neg_constraint_correct; unfold in_poly; simpl.
+    destruct (satisfies_constraint v a); simpl.
+    + reflexivity.
+    + destruct forallb; reflexivity.
+Qed.
+
+Definition poly_disjoint pol1 pol2 := forall p, in_poly p pol1 = false \/ in_poly p pol2 = false.
+
+Fixpoint all_disjoint (l : list polyhedron) :=
+  match l with
+  | nil => True
+  | p :: l => (forall p2, In p2 l -> poly_disjoint p p2) /\ all_disjoint l
+  end.
+
+Lemma poly_difference_disjoint :
+  forall p2 p1, all_disjoint (poly_difference p1 p2).
+Proof.
+  induction p2.
+  - intros; simpl; auto.
+  - intros p1. simpl. split; [|apply IHp2].
+    intros p Hp. unfold poly_disjoint.
+    intros v. unfold in_poly. simpl.
+    rewrite neg_constraint_correct.
+    destruct (satisfies_constraint v a) eqn:Hsat; simpl.
+    + left; reflexivity.
+    + right. generalize (poly_difference_def p2 (a :: p1) v).
+      simpl; rewrite Hsat, existsb_forall; unfold in_poly; simpl.
+      intros Hdef; apply Hdef. auto.
+Qed.
+
+Definition isBottom pol :=
+  BIND p <- lift (ExactCs.fromCs_unchecked (poly_to_Cs pol)) -; lift (CstrDomain.isBottom p).
+
+Lemma isBottom_correct :
+  forall pol t, 0 < t -> If isBottom pol THEN forall p, in_poly p (expand_poly t pol) = false.
+Proof.
+  intros pol t Ht b Hbot.
+  destruct b; simpl; [|auto]. intros p.
+  unfold isBottom in Hbot.
+  apply mayReturn_bind in Hbot; destruct Hbot as [p1 [Hp1 Hbot]].
+  apply mayReturn_lift in Hp1; apply mayReturn_lift in Hbot.
+  apply CstrDomain.isBottom_correct in Hbot; simpl in Hbot.
+  apply ExactCs.fromCs_unchecked_correct in Hp1.
+  apply not_true_is_false; intros Hin.
+  rewrite <- poly_to_Cs_correct_Q in Hin by auto.
+  eauto.
+Qed.
+
+Lemma isBottom_correct_1 :
+  forall pol, If isBottom pol THEN forall p, in_poly p pol = false.
+Proof.
+  intros pol. generalize (isBottom_correct pol 1).
+  rewrite expand_poly_1. intros H; apply H; lia.
+Qed.
+
 (*
-Module PPS := PolyProjectSimple CoreAlarmed.
-Import PPS.
+Definition canPrecede n (pol1 proj1 pol2 proj2 : polyhedron) :=
+  let g1 := filter (fun c => 0 <? nth n (fst c) 0) pol1 in
+  let g2 := filter (fun c => nth n (fst c) 0 <? 0) pol2 in
+  isBottom (proj1 ++ proj2 ++ g1 ++ g2).
+
+Lemma canPrecede_correct :
+  forall n pol1 proj1 pol2 proj2,
+    isExactProjection n pol1 proj1 -> isExactProjection n pol2 proj2 ->
+    If canPrecede n pol1 proj1 pol2 proj2 THEN
+       forall p1 x, in_poly p1 pol1 = true -> in_poly (assign n x p1) pol2 = true -> nth n p1 0 < x.
+Proof.
+  intros n pol1 proj1 pol2 proj2 Hproj1 Hproj2 b Hprec.
+  destruct b; simpl; [|auto].
+  intros p1 x Hp1 Hpx.
+  unfold canPrecede in Hprec. apply isBottom_correct_1 in Hprec; simpl in Hprec.
+  specialize (Hprec p1). rewrite !in_poly_app in Hprec. reflect.
+  apply isExactProjection_weaken1 in Hproj1. eapply isExactProjection_assign_1 in Hproj1; [|exact Hp1].
+  rewrite assign_id in Hproj1. rewrite Hproj1 in Hprec.
+  apply isExactProjection_weaken1 in Hproj2. eapply isExactProjection_assign_1 in Hproj2; [|exact Hpx].
+  rewrite assign_assign, assign_id in Hproj2. rewrite Hproj2 in Hprec.
+  destruct Hprec as [? | [? | [Hprec | Hprec]]]; try congruence.
+  - exfalso; eapply eq_true_false_abs; [|exact Hprec].
+    unfold in_poly in *; rewrite forallb_forall in *.
+    intros c. rewrite filter_In. intros; apply Hp1; tauto.
+  - assert (Hin : in_poly (assign n x p1) (filter (fun c => nth n (fst c) 0 <? 0) pol2) = true).
+    + unfold in_poly in *; rewrite forallb_forall in *.
+      intros c. rewrite filter_In. intros; apply Hpx; tauto.
+    + rewrite <- Z.nle_gt. intros Hle.
+      eapply eq_true_false_abs; [|exact Hprec].
+      unfold in_poly in *; rewrite forallb_forall in *.
+      intros c. rewrite filter_In. intros Hc.
+      specialize (Hin c). rewrite filter_In in Hin. specialize (Hin Hc).
+      destruct Hc as [Hcin Hc].
+      unfold satisfies_constraint in *. reflect. rewrite dot_product_assign_left in Hin.
+      nia.
+Qed.
 *)
+
+Definition canPrecede n (pol1 pol2 proj2 : polyhedron) :=
+  let g2 := filter (fun c => nth n (fst c) 0 <? 0) pol2 in
+  isBottom (pol1 ++ proj2 ++ g2).
+
+Lemma canPrecede_correct :
+  forall n pol1 pol2 proj2,
+    isExactProjection n pol2 proj2 ->
+    If canPrecede n pol1 pol2 proj2 THEN
+       forall p1 x, in_poly p1 pol1 = true -> in_poly (assign n x p1) pol2 = true -> nth n p1 0 < x.
+Proof.
+  intros n pol1 pol2 proj2 Hproj2 b Hprec.
+  destruct b; simpl; [|auto].
+  intros p1 x Hp1 Hpx.
+  unfold canPrecede in Hprec. apply isBottom_correct_1 in Hprec; simpl in Hprec.
+  specialize (Hprec p1). rewrite !in_poly_app in Hprec. reflect.
+  rewrite Hp1 in Hprec.
+  apply isExactProjection_weaken1 in Hproj2. eapply isExactProjection_assign_1 in Hproj2; [|exact Hpx].
+  rewrite assign_assign, assign_id in Hproj2. rewrite Hproj2 in Hprec.
+  destruct Hprec as [? | [? | Hprec]]; try congruence.
+  assert (Hin : in_poly (assign n x p1) (filter (fun c => nth n (fst c) 0 <? 0) pol2) = true).
+  - unfold in_poly in *; rewrite forallb_forall in *.
+    intros c. rewrite filter_In. intros; apply Hpx; tauto.
+  - rewrite <- Z.nle_gt. intros Hle.
+    eapply eq_true_false_abs; [|exact Hprec].
+    unfold in_poly in *; rewrite forallb_forall in *.
+    intros c. rewrite filter_In. intros Hc.
+    specialize (Hin c). rewrite filter_In in Hin. specialize (Hin Hc).
+    destruct Hc as [Hcin Hc].
+    unfold satisfies_constraint in *. reflect. rewrite dot_product_assign_left in Hin.
+    nia.
+Qed.
 
 Module Proj := FourierMotzkinProject CoreAlarmed.
 (* Module Canon := NaiveCanonizer CoreAlarmed. *)
