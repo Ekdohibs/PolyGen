@@ -270,22 +270,37 @@ Proof.
   - intros H; split; intros c Hin Hcmp; apply H; auto; lia.
 Qed.
 
+Fixpoint minindex {A : Type} (f : A -> Z) (l : list A) : option A :=
+  match l with
+  | nil => None
+  | x :: l => match minindex f l with None => Some x | Some y => if f x <? f y then Some x else Some y end
+  end.
+
+Lemma minindex_In :
+  forall A f (l : list A) x, minindex f l = Some x -> In x l.
+Proof.
+  induction l.
+  - intros; simpl in *; congruence.
+  - intros x H; simpl in *. destruct (minindex f l) as [u|].
+    + specialize (IHl u). destruct (f a <? f u); injection H; intros H1; rewrite <- H1; tauto.
+    + injection H; intros; tauto.
+Qed.
+
 Definition find_eq (n : nat) (p : polyhedron) :=
   let l1 := filter (fun c => 0 <? nth n (fst c) 0) p in
   let l2 := filter (fun c => nth n (fst c) 0 <? 0) p in
   let l12 := list_prod l1 l2 in
-  match find (fun c12 => is_eq (fst (fst c12)) (mult_vector (-1) (fst (snd c12))) && (snd (fst c12) =? -snd (snd c12))) l12 with
-  | None => None
-  | Some (c1, c2) => Some c1
-  end.
+  let flt := map fst (filter (fun c12 => is_eq (fst (fst c12)) (mult_vector (-1) (fst (snd c12))) && (snd (fst c12) =? -snd (snd c12))) l12) in
+  minindex (fun c => nth n (fst c) 0) flt.
 
 Theorem find_eq_in :
   forall n pol c, find_eq n pol = Some c -> In c pol.
 Proof.
   intros n pol c Hfind. unfold find_eq in *.
-  match goal with [ Hfind : context[match ?X with _ => _ end] |- _ ] => destruct X as [[c1 c2]|] eqn:Hfind1 end; [|congruence].
-  injection Hfind as Hfind; rewrite <- Hfind.
-  apply find_some in Hfind1; reflect; destruct Hfind1 as [Hfind1 [Heql Heqc]]. reflect; simpl in *.
+  apply minindex_In in Hfind.
+  rewrite in_map_iff in Hfind; destruct Hfind as [[c1 c2] [Heq Hfind1]].
+  simpl in Heq; rewrite Heq in *.
+  rewrite filter_In in Hfind1. destruct Hfind1 as [Hfind1 Heq1].
   rewrite in_prod_iff, !filter_In in Hfind1. tauto.
 Qed.
 
@@ -295,11 +310,11 @@ Theorem find_eq_correct :
 Proof.
   intros n pol c p t Ht Hfind Hin.
   unfold find_eq, in_poly, satisfies_constraint in *.
-  match goal with [ Hfind : context[match ?X with _ => _ end] |- _ ] => destruct X as [[c1 c2]|] eqn:Hfind1 end; [|congruence].
-  injection Hfind as Hfind; rewrite <- Hfind.
-  apply find_some in Hfind1; reflect; destruct Hfind1 as [Hfind1 [Heql Heqc]]. reflect; simpl in *.
-  rewrite in_prod_iff, !filter_In in Hfind1.
-  destruct Hfind1 as [[Hin1 ?] [Hin2 ?]]. reflect.
+  apply minindex_In in Hfind.
+  rewrite in_map_iff in Hfind; destruct Hfind as [[c1 c2] [Heq Hfind1]].
+  simpl in Heq; rewrite Heq in *.
+  rewrite filter_In, in_prod_iff, !filter_In in Hfind1. reflect. destruct Hfind1 as [[[Hin1 ?] [Hin2 ?]] [Heql Heqr]].
+  simpl in *; reflect.
   apply Hin in Hin1; apply Hin in Hin2; try lia; reflect.
   rewrite Heql, dot_product_mult_right in *. nia.
 Qed.
@@ -317,11 +332,11 @@ Theorem find_eq_nth :
 Proof.
   intros n pol c Hfind.
   unfold find_eq in *.
-  match goal with [ Hfind : context[match ?X with _ => _ end] |- _ ] => destruct X as [[c1 c2]|] eqn:Hfind1 end; [|congruence].
-  injection Hfind as Hfind; rewrite <- Hfind.
-  apply find_some in Hfind1; reflect; destruct Hfind1 as [Hfind1 [Heql Heqc]]. reflect; simpl in *.
-  rewrite in_prod_iff, !filter_In in Hfind1.
-  destruct Hfind1 as [[? ?] [? ?]]. reflect; auto.
+  apply minindex_In in Hfind.
+  rewrite in_map_iff in Hfind; destruct Hfind as [[c1 c2] [Heq Hfind1]].
+  simpl in Heq; rewrite Heq in *.
+  rewrite filter_In, in_prod_iff, !filter_In in Hfind1. reflect. destruct Hfind1 as [[[? ?] [? ?]] ?].
+  auto.
 Qed.
 
 Definition solve_eq n c :=
