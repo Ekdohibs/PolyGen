@@ -141,7 +141,7 @@ let process_pi (((env_size, scan_dimensions), name), pi) =
   let () = Format.printf "No schedule:@.%a@.@." print_pi pi_lex in
   let scand = int_to_coqnat (scan_dimensions + List.length pi.pi_schedule) in
   let totald = int_to_coqnat (env_size + scan_dimensions + List.length pi.pi_schedule) in
-  let (gen, ok) = CodeGen.generate scand totald pi_lex in
+  let (gen, ok) = CodeGen.complete_generate scand totald pi_lex in
   if ok then
     Format.printf "Generated code:@.%a@.@." (print_loop env_size) gen
   else

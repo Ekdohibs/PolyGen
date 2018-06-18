@@ -21,7 +21,61 @@ Require Vpl.ImpureConfig.
 Open Scope Z_scope.
 Open Scope list_scope.
 
-  
+
+Notation affine_expr := (positive * (list Z * Z))%type.
+Definition eval_affine_expr env (e : affine_expr) :=
+  (dot_product (fst (snd e)) (rev env) + snd (snd e)) / (Zpos (fst e)).
+Definition affine_expr_ok env (e : affine_expr) :=
+  ((dot_product (fst (snd e)) (rev env) + snd (snd e)) mod (Zpos (fst e)) =? 0).
+
+Inductive poly_stmt :=
+| PLoop : polyhedron -> poly_stmt -> poly_stmt
+| PInstr : instr -> list affine_expr -> poly_stmt
+| PSkip : poly_stmt
+| PSeq : poly_stmt -> poly_stmt -> poly_stmt
+| PGuard : polyhedron -> poly_stmt -> poly_stmt.
+
+Inductive poly_loop_semantics : poly_stmt -> list Z -> mem -> mem -> Prop :=
+| PLInstr : forall i es env mem1 mem2,
+(*    forallb (affine_expr_ok env) es = true -> *)
+    instr_semantics i (map (eval_affine_expr env) es) mem1 mem2 ->
+    poly_loop_semantics (PInstr i es) env mem1 mem2
+| PLSkip : forall env mem, poly_loop_semantics PSkip env mem mem
+| PLSeq : forall env st1 st2 mem1 mem2 mem3,
+    poly_loop_semantics st1 env mem1 mem2 ->
+    poly_loop_semantics st2 env mem2 mem3 ->
+    poly_loop_semantics (PSeq st1 st2) env mem1 mem3
+| PLGuardTrue : forall env t st mem1 mem2,
+    poly_loop_semantics st env mem1 mem2 ->
+    in_poly (rev env) t = true ->
+    poly_loop_semantics (PGuard t st) env mem1 mem2
+| PLGuardFalse : forall env t st mem,
+    in_poly (rev env) t = false -> poly_loop_semantics (PGuard t st) env mem mem
+| PLLoop : forall env p lb ub st mem1 mem2,
+    (forall x, in_poly (rev (x :: env)) p = true <-> lb <= x < ub) ->
+    iter_semantics (fun x => poly_loop_semantics st (x :: env)) lb ub mem1 mem2 ->
+    poly_loop_semantics (PLoop p st) env mem1 mem2.
+
+Lemma PLLoop_inv_sem :
+  forall env p st mem1 mem2,
+    poly_loop_semantics (PLoop p st) env mem1 mem2 ->
+    exists lb ub, (forall x, in_poly (rev (x :: env)) p = true <-> lb <= x < ub) /\ iter_semantics (fun x => poly_loop_semantics st (x :: env)) lb ub mem1 mem2.
+Proof.
+  intros env p st mem1 mem2 H. inversion_clear H.
+  eexists; eexists; eauto.
+Qed.
+
+Lemma PLGuard_inv_sem :
+  forall env p st mem1 mem2,
+    poly_loop_semantics (PGuard p st) env mem1 mem2 ->
+    if in_poly (rev env) p then poly_loop_semantics st env mem1 mem2 else mem1 = mem2.
+Proof.
+  intros env p st mem1 mem2 H.
+  inversion_clear H.
+  - rewrite H1; simpl; auto.
+  - rewrite H0; simpl; auto.
+Qed.
+
 
 (*
 (* TODO *)
@@ -1392,17 +1446,57 @@ Proof.
   rewrite dot_product_commutative. reflexivity.
 Qed.
 
+Fixpoint sequence {A : Type} (l : list (imp A)) : imp (list A) :=
+  match l with
+  | nil => pure nil
+  | x :: l => BIND y <- x -; BIND l1 <- sequence l -; pure (y :: l1)
+  end.
+
+Definition fmap {A B : Type} (f : A -> B) (x : imp A) : imp B :=
+  BIND y <- x -; pure (f y).
+
+Definition make_poly_test n poly :=
+  and_all (map (make_affine_test n) poly).
+
+Lemma make_poly_test_correct :
+  forall n poly env, length env = n ->
+                eval_test env (make_poly_test n poly) = in_poly (rev env) poly.
+Proof.
+  intros n poly env Hlen.
+  unfold make_poly_test. rewrite and_all_correct. unfold in_poly.
+  rewrite forallb_map. apply forallb_ext. intros c. apply make_affine_test_correct. auto.
+Qed.
+
 Definition scan_dimension (n : nat) (inner : stmt) (p : polyhedron) : imp stmt :=
   match find_eq n p with
   | Some c =>
     let '(result, test) := solve_eq n c in
     let cstrs := map (fun c1 => make_affine_test n (make_constraint_with_eq n c c1)) (filter (fun c => negb (nth n (fst c) 0 =? 0)) p) in
-    pure (make_guard (make_and test (and_all cstrs)) (make_let result inner))
+    let cstrs1 := map (make_affine_test n) (filter (fun c => nth n (fst c) 0 =? 0) p) in
+    pure (make_guard (make_and test (and_all (cstrs ++ cstrs1))) (make_let result inner))
   | None => 
     BIND lb <- res_to_alarm (Constant 0) (find_lower_bound n p) -;
     BIND ub <- res_to_alarm (Constant 0) (find_upper_bound n p) -;
-    pure (Loop lb ub inner)
+    let cstrs := filter (fun c => nth n (fst c) 0 =? 0) p in
+    pure (make_guard (make_poly_test n cstrs) (Loop lb ub inner))
   end.
+
+Lemma dot_product_nth_zero_eval :
+  forall env n u x, nth n u 0 = 0 -> length env = n -> dot_product (env ++ x :: nil) u = dot_product env u.
+Proof.
+  intros env n u x H1 H2.
+  rewrite <- dot_product_assign_left_zero with (k := n) (s := 0) by auto.
+  rewrite assign_app_ge by lia. rewrite H2, Nat.sub_diag.
+  unfold assign. simpl.
+  f_equiv. rewrite <- app_nil_r. f_equiv.
+Qed.
+
+Lemma satisfies_constraint_nth_zero_eq :
+  forall env n c x, nth n (fst c) 0 = 0 -> length env = n -> satisfies_constraint (env ++ x :: nil) c = satisfies_constraint env c.
+Proof.
+  intros. unfold satisfies_constraint.
+  erewrite dot_product_nth_zero_eval; eauto.
+Qed.
 
 Lemma scan_dimension_sem :
   forall n inner pol,
@@ -1411,7 +1505,7 @@ Lemma scan_dimension_sem :
            length env = n ->
            exists lb ub,
              (loop_semantics st env mem1 mem2 <-> iter_semantics (fun x => loop_semantics inner (x :: env)) lb ub mem1 mem2) /\
-             (forall x, (forall c, In c pol -> nth n (fst c) 0 <> 0 -> satisfies_constraint (rev (x :: env)) c = true) <-> lb <= x < ub).
+             (forall x, in_poly (rev (x :: env)) pol = true <-> lb <= x < ub).
 Proof.
   intros n inner pol st Hst env mem1 mem2 Henvlen.
   unfold scan_dimension in Hst.
@@ -1427,56 +1521,135 @@ Proof.
       * intros x. simpl.
         unfold test1 in Htest1. rewrite make_and_correct in Htest1; reflect.
         rewrite and_all_correct in Htest1. destruct Htest1 as [Htest Hcstr].
+        rewrite forallb_app, andb_true_iff in Hcstr. destruct Hcstr as [Hcstr1 Hcstr2].
         transitivity (eval_expr env (fst (solve_eq n c)) = x /\ eval_test env (snd (solve_eq n c)) = true); [|rewrite Hsolve; simpl; intuition lia].
         rewrite solve_eq_correct by (auto || lia).
         split.
-        -- intros H. eapply find_eq_correct_1; eauto.
-        -- intros H c1 Hc1in Hc1nth.
-           rewrite forallb_map, forallb_forall in Hcstr. specialize (Hcstr c1).
-           rewrite filter_In in Hcstr. reflect. rewrite make_affine_test_correct in Hcstr by auto.
-           rewrite <- make_constraint_with_eq_correct_1 with (n := n) (c1 := c) by (auto || lia).
-           rewrite <- Hcstr by auto.
-           unfold satisfies_constraint. f_equal.
-           rewrite <- dot_product_assign_left_zero with (k := n) (s := 0) by (apply make_constraint_with_eq_nth; lia).
-           f_equiv. rewrite assign_app_ge by (rewrite rev_length; lia). rewrite rev_length, Henvlen, Nat.sub_diag.
-           unfold assign. simpl.
-           rewrite <- app_nil_r. f_equiv.
+        -- intros H. unfold in_poly in H. rewrite forallb_forall in H.
+           eapply find_eq_correct_1; eauto.
+        -- intros H. unfold in_poly; rewrite forallb_forall. intros c1 Hc1in.
+           rewrite forallb_map, forallb_forall in Hcstr1, Hcstr2. specialize (Hcstr1 c1). specialize (Hcstr2 c1).
+           rewrite filter_In, make_affine_test_correct in Hcstr1, Hcstr2 by auto.
+           destruct (nth n (fst c1) 0 =? 0) eqn:Hc1nth; reflect.
+           ++ erewrite satisfies_constraint_nth_zero_eq; rewrite ?rev_length; eauto.
+           ++ rewrite <- make_constraint_with_eq_correct_1 with (n := n) (c1 := c) by (auto || lia).
+              erewrite satisfies_constraint_nth_zero_eq; rewrite ?rev_length; eauto.
+              apply make_constraint_with_eq_nth; lia.
     + exists 0. exists 0. split.
       * split.
         -- intros Hsem. rewrite make_guard_correct, Htest1 in Hsem; rewrite Hsem. constructor; lia.
         -- intros Hsem. rewrite make_guard_correct, Htest1. inversion_clear Hsem; [|lia]. reflexivity.
       * split; [|lia]. intros H. exfalso.
         enough (eval_test env test1 = true) by congruence.
-        unfold test1. rewrite make_and_correct, and_all_correct, forallb_map. reflect.
+        unfold test1. rewrite make_and_correct, and_all_correct, forallb_app, !forallb_map. reflect.
+        unfold in_poly in H. rewrite forallb_forall in H.
         assert (Heq : dot_product (rev (x :: env)) (fst c) = snd c) by (eapply find_eq_correct_1; eauto). simpl in Heq.
-        split.
+        split; [|split].
         -- rewrite <- solve_eq_correct in Heq; [|exact Henvlen|lia]. rewrite Hsolve in Heq; simpl in Heq; tauto.
         -- rewrite forallb_forall. intros c1 Hc1in. rewrite filter_In in Hc1in. reflect.
-           rewrite make_affine_test_correct by auto. destruct Hc1in as [Hc1in Hc1n]. specialize (H c1 Hc1in Hc1n).
+           rewrite make_affine_test_correct by auto. destruct Hc1in as [Hc1in Hc1n]. specialize (H c1 Hc1in).
            rewrite <- make_constraint_with_eq_correct_1 with (n := n) (c1 := c) in H by (auto || lia).
-           rewrite <- H. unfold satisfies_constraint. f_equal.
-           rewrite <- dot_product_assign_left_zero with (k := n) (s := 0) (v1 := rev (x :: env)) by (apply make_constraint_with_eq_nth; lia).
-           f_equiv. simpl. rewrite assign_app_ge by (rewrite rev_length; lia). rewrite rev_length, Henvlen, Nat.sub_diag.
-           unfold assign. simpl. rewrite <- app_nil_r with (l := rev env) at 1. f_equiv.
+           simpl in H; erewrite satisfies_constraint_nth_zero_eq in H; rewrite ?rev_length; eauto.
+           apply make_constraint_with_eq_nth; lia.
+        -- rewrite forallb_forall. intros c1 Hc1in. rewrite filter_In in Hc1in. reflect.
+           rewrite make_affine_test_correct by auto. destruct Hc1in as [Hc1in Hc1n]. specialize (H c1 Hc1in).
+           simpl in H; erewrite satisfies_constraint_nth_zero_eq in H; rewrite ?rev_length; eauto.
   - bind_imp_destruct Hst lb Hlb. apply res_to_alarm_correct in Hlb.
     bind_imp_destruct Hst ub Hub. apply res_to_alarm_correct in Hub.
-    exists (eval_expr env lb). exists (eval_expr env ub).
     apply mayReturn_pure in Hst. rewrite <- Hst.
-    split.
-    + split.
-      * intros Hsem; inversion_clear Hsem; auto.
-      * intros Hsem; constructor; auto.
-    + intros x. rewrite find_bounds_correct; try reflexivity; auto.
+    match goal with [ Hst : make_guard ?T _ = _ |- _ ] => set (test1 := T) end.
+    destruct (eval_test env test1) eqn:Htest1.
+    + exists (eval_expr env lb). exists (eval_expr env ub).
+      rewrite make_guard_correct, Htest1.
+      split.
+      * split.
+        -- intros Hsem; inversion_clear Hsem; auto.
+        -- intros Hsem; constructor; auto.
+      * intros x. rewrite find_bounds_correct; [|exact Hlb|exact Hub|exact Henvlen].
+        unfold test1 in Htest1. rewrite make_poly_test_correct in Htest1 by auto.
+        unfold in_poly in *. rewrite forallb_forall. rewrite forallb_forall in Htest1.
+        split.
+        -- intros H c Hc Hcnth; apply H; auto.
+        -- intros H c Hc. destruct (nth n (fst c) 0 =? 0) eqn:Hcnth; reflect.
+           ++ simpl; erewrite satisfies_constraint_nth_zero_eq; rewrite ?rev_length; [|eauto|eauto].
+              apply Htest1. rewrite filter_In; reflect; auto.
+           ++ apply H; auto.
+    + exists 0. exists 0. rewrite make_guard_correct, Htest1. split.
+      * split.
+        -- intros H; rewrite H. econstructor; lia.
+        -- intros H; inversion_clear H; [auto|lia].
+      * unfold test1 in Htest1. intros x. split; [|lia].
+        intros H; unfold in_poly in H; rewrite forallb_forall in H.
+        exfalso; eapply eq_true_false_abs; [|exact Htest1].
+        rewrite make_poly_test_correct by auto. unfold in_poly; rewrite forallb_forall.
+        intros c Hc; rewrite filter_In in Hc; destruct Hc as [Hcin Hcnth].
+        specialize (H c Hcin). reflect. simpl in H.
+        erewrite satisfies_constraint_nth_zero_eq in H; rewrite ?rev_length; eauto.
 Qed.
 
+Fixpoint polyloop_to_loop n pstmt : imp stmt :=
+  match pstmt with
+  | PSkip => pure (Seq nil)
+  | PSeq s1 s2 =>
+    BIND u1 <- polyloop_to_loop n s1 -;
+    BIND u2 <- polyloop_to_loop n s2 -;
+    pure (Seq (u1 :: u2 :: nil))
+  | PInstr i es =>
+    pure (Instr i (map (fun e => make_div (make_affine_expr n (snd e)) (Zpos (fst e))) es))
+  | PLoop pol inner =>
+    BIND inner1 <- polyloop_to_loop (S n) inner -;
+    scan_dimension n inner1 pol
+  | PGuard pol inner =>
+    BIND inner1 <- polyloop_to_loop n inner -;
+    pure (make_guard (make_poly_test n pol) inner1)
+  end.
 
-Fixpoint generate_loop (d : nat) (n : nat) (pi : Polyhedral_Instruction) : imp stmt :=
+Lemma polyloop_to_loop_correct :
+  forall pstmt n env mem1 mem2,
+    WHEN st <- polyloop_to_loop n pstmt THEN
+    loop_semantics st env mem1 mem2 ->
+    length env = n ->
+    poly_loop_semantics pstmt env mem1 mem2.
+Proof.
+  induction pstmt.
+  - intros n env mem1 mem2 st Hst Hsem Henv.
+    simpl in *. bind_imp_destruct Hst inner Hinner.
+    generalize (scan_dimension_sem _ _ _ _ Hst _ mem1 mem2 Henv).
+    intros [lb [ub [H1 H2]]].
+    econstructor; [exact H2|]. rewrite H1 in Hsem.
+    eapply iter_semantics_map; [|exact Hsem].
+    intros x mem3 mem4 Hx Hsem2. simpl in Hsem2. eapply IHpstmt; simpl; eauto.
+  - intros n env mem1 mem2 st Hst Hsem Henv.
+    simpl in *. apply mayReturn_pure in Hst. rewrite <- Hst in *.
+    inversion_clear Hsem. constructor.
+    rewrite map_map in H.
+    unfold eval_affine_expr. erewrite map_ext; [exact H|].
+    intros [k a]; simpl. rewrite make_div_correct, make_affine_expr_correct by auto. reflexivity.
+  - intros n env mem1 mem2 st Hst Hsem Henv.
+    simpl in *. apply mayReturn_pure in Hst; rewrite <- Hst in *.
+    inversion_clear Hsem. econstructor; auto.
+  - intros n env mem1 mem2 st Hst Hsem Henv.
+    simpl in *.
+    bind_imp_destruct Hst u1 Hu1. bind_imp_destruct Hst u2 Hu2.
+    apply mayReturn_pure in Hst; rewrite <- Hst in *.
+    inversion_clear Hsem; inversion_clear H0. replace mem2 with mem4 by (inversion_clear H2; auto).
+    econstructor; [eapply IHpstmt1|eapply IHpstmt2]; eauto.
+  - intros n env mem1 mem2 st Hst Hsem Henv.
+    simpl in *. bind_imp_destruct Hst inner Hinner. apply mayReturn_pure in Hst; rewrite <- Hst in *.
+    rewrite make_guard_correct in Hsem.
+    rewrite make_poly_test_correct in Hsem by auto.
+    destruct (in_poly (rev env) p) eqn:Htest.
+    + apply PLGuardTrue; [|auto]. eapply IHpstmt; eauto.
+    + rewrite Hsem; apply PLGuardFalse; auto.
+Qed.
+
+Fixpoint generate_loop (d : nat) (n : nat) (pi : Polyhedral_Instruction) : imp poly_stmt :=
   match d with
-  | O => pure (Instr pi.(pi_instr) (map (make_affine_expr n) pi.(pi_transformation)))
+  | O => pure (PInstr pi.(pi_instr) (map (fun t => (1%positive, t)) pi.(pi_transformation)))
   | S d1 =>
     BIND proj <- project ((n - d1)%nat, pi.(pi_poly)) -;
     BIND inner <- generate_loop d1 n pi -;
-    scan_dimension (n - d)%nat inner proj
+    pure (PLoop (filter (fun c => negb (nth (n - d)%nat (fst c) 0 =? 0)) proj) inner)
   end.
 
 Lemma env_scan_begin :
@@ -1526,7 +1699,7 @@ Qed.
 Lemma generate_loop_single_point :
   forall n pi env mem1 mem2,
     WHEN st <- generate_loop 0%nat n pi THEN
-    loop_semantics st env mem1 mem2 ->
+    poly_loop_semantics st env mem1 mem2 ->
     length env = n ->
     in_poly (rev env) pi.(pi_poly) = true ->
     env_poly_lex_semantics (rev env) n (pi :: nil) mem1 mem2.
@@ -1545,7 +1718,7 @@ Proof.
   - rewrite <- Hgen in Hsem. inversion_clear Hsem.
     unfold affine_product in *. rewrite map_map in H.
     erewrite map_ext in H; [exact H|].
-    intros; apply make_affine_expr_correct; auto.
+    intros; unfold eval_affine_expr; simpl. apply Z.div_1_r.
   - intros n1 p1. unfold scanned.
     destruct n1 as [|n1]; [|destruct n1; simpl; auto]. simpl.
     apply not_true_iff_false; intros H; reflect; destruct H as [H1 H2].
@@ -1614,7 +1787,7 @@ Theorem generate_loop_preserves_sem :
   forall d n pi env mem1 mem2,
     (d <= n)%nat ->
     WHEN st <- generate_loop d n pi THEN
-    loop_semantics st env mem1 mem2 ->
+    poly_loop_semantics st env mem1 mem2 ->
     length env = (n - d)%nat ->
     (forall c, In c pi.(pi_poly) -> fst c =v= resize n (fst c)) ->
     project_invariant (n - d)%nat pi.(pi_poly) (rev env) ->
@@ -1628,48 +1801,42 @@ Proof.
   - intros n pi env mem1 mem2 Hnd st Hgen Hsem Hlen Hpilen Hinv. simpl in *.
     bind_imp_destruct Hgen proj Hproj.
     bind_imp_destruct Hgen inner Hinner.
-    apply scan_dimension_sem in Hgen. specialize (Hgen env mem1 mem2 Hlen).
-    destruct Hgen as [lb [ub [Hsemgen Hlbub]]]. rewrite Hsemgen in Hsem.
+    apply mayReturn_pure in Hgen. rewrite <- Hgen in Hsem.
+    apply PLLoop_inv_sem in Hsem.
+    destruct Hsem as [lb [ub [Hlbub Hsem]]].
     unfold env_poly_lex_semantics in *.
     eapply poly_lex_semantics_extensionality.
     + apply poly_lex_concat_seq with (to_scans := fun x => env_scan (pi :: nil) (rev (x :: env)) n).
       * eapply iter_semantics_map; [|apply Hsem].
         intros x mem3 mem4 Hbounds Hloop. eapply IHd with (env := x :: env); simpl; eauto; try lia.
         replace (n - d)%nat with (S (n - S d))%nat in * by lia.
-        eapply project_next_r_inclusion; [|exact Hproj|rewrite (Hlbub x); auto].
-        rewrite project_invariant_resize, resize_app by (rewrite rev_length; auto).
-        apply Hinv.
+        eapply project_next_r_inclusion; [|exact Hproj|].
+        -- rewrite project_invariant_resize, resize_app by (rewrite rev_length; auto).
+           apply Hinv.
+        -- intros c Hcin Hcnth. rewrite <- Hlbub in Hbounds.
+           unfold in_poly in Hbounds; rewrite forallb_forall in Hbounds. apply Hbounds.
+           rewrite filter_In; reflect; auto.
       * intros x. apply env_scan_proper.
       * intros x1 x2 m p. apply env_scan_inj_rev.
       * intros x1 n1 p1 x2 n2 p2 Hcmp H1 H2.
         apply env_scan_begin in H1; apply env_scan_begin in H2. simpl in *.
         rewrite H1, H2 in Hcmp. eapply lex_app_not_gt; rewrite Hcmp. congruence.
     + simpl. intros m p. rewrite env_scan_extend; eauto; try lia.
-      replace (S (n - S d)) with (n - d)%nat by lia. apply Hproj.
-Qed.
-
-Definition make_poly_test n poly :=
-  and_all (map (make_affine_test n) poly).
-
-Lemma make_poly_test_correct :
-  forall n poly env, length env = n ->
-                eval_test env (make_poly_test n poly) = in_poly (rev env) poly.
-Proof.
-  intros n poly env Hlen.
-  unfold make_poly_test. rewrite and_all_correct. unfold in_poly.
-  rewrite forallb_map. apply forallb_ext. intros c. apply make_affine_test_correct. auto.
+      * replace (S (n - S d)) with (n - d)%nat by lia. apply Hproj.
+      * intros x; rewrite <- Hlbub. unfold in_poly; rewrite forallb_forall. apply forall_ext; intros c.
+        split; intros H; intros; apply H; rewrite filter_In in *; reflect; tauto.
 Qed.
 
 Definition generate d n pi :=
   BIND st <- generate_loop d n pi -;
   BIND ctx <- project_invariant_export ((n - d)%nat, pi.(pi_poly)) -;
-  pure (make_guard (make_poly_test (n - d)%nat ctx) st).
+  pure (PGuard ctx st).
 
 Theorem generate_preserves_sem :
   forall d n pi env mem1 mem2,
     (d <= n)%nat ->
     WHEN st <- generate d n pi THEN
-    loop_semantics st env mem1 mem2 ->
+    poly_loop_semantics st env mem1 mem2 ->
     length env = (n - d)%nat ->
     (forall c, In c pi.(pi_poly) -> fst c =v= resize n (fst c)) ->
     env_poly_lex_semantics (rev env) n (pi :: nil) mem1 mem2.
@@ -1678,15 +1845,13 @@ Proof.
   bind_imp_destruct Hgen st1 H. bind_imp_destruct Hgen ctx Hctx.
   apply mayReturn_pure in Hgen.
   rewrite <- Hgen in *.
-  rewrite make_guard_correct in Hloop.
-  destruct (eval_test env (make_poly_test (n - d)%nat ctx)) eqn:Htest.
+  apply PLGuard_inv_sem in Hloop.
+  destruct (in_poly (rev env) ctx) eqn:Htest.
   - eapply generate_loop_preserves_sem; eauto.
-    rewrite <- (project_invariant_export_correct _ _ _ _ Hctx) by eauto.
-    erewrite <- make_poly_test_correct; [|apply Henv]. auto.
+    rewrite <- (project_invariant_export_correct _ _ _ _ Hctx); eauto.
   - rewrite Hloop. apply PolyLexDone. intros n0 p. unfold env_scan.
     destruct n0; simpl in *; [|destruct n0]; auto. reflect.
     rewrite rev_length; rewrite Henv.
-    rewrite make_poly_test_correct in Htest; auto.
     destruct (is_eq (rev env) (resize (n - d)%nat p)) eqn:Hpenv; auto.
     destruct (in_poly p pi.(pi_poly)) eqn:Hpin; auto. exfalso.
     eapply project_invariant_inclusion in Hpin.
@@ -1696,6 +1861,25 @@ Qed.
 
 
 
+Definition complete_generate d n pi :=
+  BIND polyloop <- generate d n pi -;
+  polyloop_to_loop (n - d)%nat polyloop.
+
+Theorem complete_generate_preserve_sem :
+  forall d n pi env mem1 mem2,
+    (d <= n)%nat ->
+    WHEN st <- complete_generate d n pi THEN
+    loop_semantics st env mem1 mem2 ->
+    length env = (n - d)%nat ->
+    (forall c, In c pi.(pi_poly) -> fst c =v= resize n (fst c)) ->
+    env_poly_lex_semantics (rev env) n (pi :: nil) mem1 mem2.
+Proof.
+  intros d n pi env mem1 mem2 Hdn st Hst Hloop Henv Hsize.
+  unfold complete_generate in Hst.
+  bind_imp_destruct Hst polyloop Hpolyloop.
+  eapply generate_preserves_sem; eauto.
+  eapply polyloop_to_loop_correct; eauto.
+Qed.
 
 
 
