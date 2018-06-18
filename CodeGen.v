@@ -387,144 +387,6 @@ Module Type PolyProject (Import Imp: FullImpureMonad).
 *)
 End PolyProject.
 
-(*
-Module PolyProjectSimple (Import Imp: FullAlarmedMonad) <: PolyProject Imp.
-
-  Parameter untrusted_project : nat -> polyhedron -> (polyhedron * list witness)%type.
-
-  Definition project (np : nat * polyhedron) : imp polyhedron :=
-    let (n, p) := np in
-    let (res, wits) := untrusted_project n p in
-    if negb (length res =? length wits)%nat then
-      alarm "Incorrect number of witnesses" p
-    else if negb (forallb (fun c => is_eq (fst c) (resize n (fst c))) res) then
-      alarm "Constraint too long" p
-    else if negb (forallb (fun z => is_redundant (snd z) p (fst z)) (combine res wits)) then
-      alarm "Witness checking failed" p
-    else if negb (forallb (fun c => negb (is_eq (fst c) (resize n (fst c))) || existsb (fun c' => is_eq (fst c) (fst c') && (snd c =? snd c')) res) p) then
-      alarm "Constraint removed in projection" p
-    else
-      pure res.
-
-  Theorem project_inclusion :
-    forall n p pol, in_poly p pol = true -> WHEN proj <- project (n, pol) THEN in_poly (resize n p) proj = true.
-  Proof.
-    intros n p pol Hin.
-    unfold project.
-    destruct (untrusted_project n pol) as [res wits].
-    case_if eq Hlen; reflect; [xasimplify ltac:(eauto using mayReturn_alarm)|].
-    case_if eq Hresize; reflect; [xasimplify ltac:(eauto using mayReturn_alarm)|].
-    case_if eq Hwits; reflect; [xasimplify ltac:(eauto using mayReturn_alarm)|].
-    case_if eq Hpreserve; reflect; [xasimplify ltac:(eauto using mayReturn_alarm)|].
-    xasimplify eauto.
-    assert (Hinres : in_poly p res = true).
-    - unfold in_poly. rewrite forallb_forall. intros c Hc.
-      apply in_l_combine with (l' := wits) in Hc; [|auto].
-      destruct Hc as [wit Hwit].
-      eapply is_redundant_correct; [|apply Hin].
-      rewrite forallb_forall in Hwits.
-      apply (Hwits (c, wit)); auto.
-    - unfold in_poly in *. rewrite forallb_forall in *. intros c Hc.
-      rewrite <- (Hinres c) by auto.
-      unfold satisfies_constraint. f_equal. specialize (Hresize c Hc). reflect.
-      rewrite Hresize.
-      rewrite <- dot_product_resize_left with (t1 := p). rewrite resize_length. reflexivity.
-  Qed.
-
-  Definition project_invariant n pol p :=
-    forall c, In c pol -> fst c =v= resize n (fst c) -> satisfies_constraint p c = true.
-
-  Theorem project_reverse_inclusion :
-    forall n pol c, In c pol -> fst c =v= resize n (fst c) -> WHEN proj <- project (n, pol) THEN (exists c', c =c= c' /\ In c' proj).
-  Proof.
-    intros n pol c Hin Heq.
-    unfold project.
-    destruct (untrusted_project n pol) as [res wits].
-    case_if eq Hlen; reflect; [xasimplify ltac:(exfalso; eauto using mayReturn_alarm)|].
-    case_if eq Hresize; reflect; [xasimplify ltac:(exfalso; eauto using mayReturn_alarm)|].
-    case_if eq Hwits; reflect; [xasimplify ltac:(exfalso; eauto using mayReturn_alarm)|].
-    case_if eq Hpreserve; reflect; [xasimplify ltac:(exfalso; eauto using mayReturn_alarm)|].
-    xasimplify eauto.
-    reflect_binders.
-    specialize (Hpreserve c Hin).
-    rewrite <- is_eq_veq in Heq; rewrite Heq in Hpreserve.
-    destruct Hpreserve as [Hpreserve | [c' [Hin2 Heqc']]]; [congruence|].
-    exists c'. auto.
-  Qed.
-
-  Theorem project_invariant_inclusion :
-    forall n pol p, in_poly p pol = true -> project_invariant n pol (resize n p).
-  Proof.
-    intros n pol p Hin. unfold in_poly, project_invariant in *.
-    rewrite forallb_forall in Hin; intros c Hinc Hlenc.
-    specialize (Hin c Hinc).
-    unfold satisfies_constraint in *.
-    rewrite Hlenc in Hin. rewrite <- dot_product_resize_left in Hin.
-    rewrite resize_length in Hin. rewrite Hlenc. auto.
-  Qed.
-
-  Theorem project_id :
-    forall n pol p, (forall c, In c pol -> fst c =v= resize n (fst c)) -> project_invariant n pol p -> in_poly p pol = true.
-  Proof.
-    intros n pol p Hsize Hinv. unfold in_poly; rewrite forallb_forall. intros c Hc.
-    apply Hinv; auto.
-  Qed.
-
-  Theorem project_next_r_inclusion :
-    forall n pol p, project_invariant n pol p ->
-               WHEN proj <- project (S n, pol) THEN
-                 (forall c, In c proj -> nth n (fst c) 0 <> 0 -> satisfies_constraint p c = true) ->
-                 project_invariant (S n) pol p.
-  Proof.
-    intros n pol p Hinv proj Hproj Hsat c Hcin Hclen.
-    destruct (nth n (fst c) 0 =? 0) eqn:Hzero; reflect.
-    - rewrite resize_succ in Hclen. rewrite Hzero in Hclen.
-      setoid_replace (0 :: nil) with (@nil Z) using relation veq in Hclen by (rewrite <- is_eq_veq; auto).
-      rewrite app_nil_r in Hclen.
-      apply Hinv; auto.
-    - destruct (project_reverse_inclusion (S n) pol c Hcin Hclen proj Hproj) as [c' [Heqc' Hc'in]].
-      rewrite Heqc'. apply Hsat; auto. erewrite nth_eq; eauto. rewrite Heqc'; reflexivity.
-  Qed.
-
-  Theorem project_invariant_resize :
-    forall n pol p, project_invariant n pol p <-> project_invariant n pol (resize n p).
-  Proof.
-    intros n pol p.
-    unfold project_invariant; apply forall_ext.
-    intros c. apply forall_ext. intros Hcin. apply forall_ext. intros Hclen.
-    apply eq_iff_eq_true. unfold satisfies_constraint. f_equal.
-    rewrite Hclen. rewrite <- dot_product_resize_left. rewrite resize_length; auto.
-  Qed.
-
-  Definition project_invariant_export (np : nat * polyhedron) : imp polyhedron :=
-    pure (filter (fun c => is_eq (fst c) (resize (fst np) (fst c))) (snd np)).
-
-  Theorem project_invariant_export_correct :
-    forall n p pol, WHEN res <- project_invariant_export (n, pol) THEN in_poly p res = true <-> project_invariant n pol p.
-  Proof.
-    intros n p pol. xasimplify eauto.
-    unfold project_invariant. unfold in_poly.
-    rewrite forallb_forall. under_forall ((list Z * Z)%type) ltac:(fun x => rewrite filter_In; reflect).
-    firstorder.
-  Qed.
-
-  Theorem project_constraint_size :
-    forall n pol c, WHEN proj <- project (n, pol) THEN In c proj -> fst c =v= resize n (fst c).
-  Proof.
-    intros n pol c. unfold project.
-    destruct (untrusted_project n pol) as [res wits].
-    case_if eq Hlen; reflect; [xasimplify ltac:(exfalso; eauto using mayReturn_alarm)|].
-    case_if eq Hresize; reflect; [xasimplify ltac:(exfalso; eauto using mayReturn_alarm)|].
-    case_if eq Hwits; reflect; [xasimplify ltac:(exfalso; eauto using mayReturn_alarm)|].
-    case_if eq Hpreserve; reflect; [xasimplify ltac:(exfalso; eauto using mayReturn_alarm)|].
-    xasimplify eauto.
-    reflect. intros Hin.
-    rewrite forallb_forall in Hresize. specialize (Hresize c); reflect; eauto.
-  Qed.
-
-End PolyProjectSimple.
- *)
-
 Module Type PolyCanonizer (Import Imp: FullImpureMonad).
 
   Parameter canonize : polyhedron -> imp polyhedron.
@@ -1283,32 +1145,6 @@ Module VplCanonizer <: PolyCanonizer CoreAlarmed.
 
 End VplCanonizer.
 
-Fixpoint list_gcd l :=
-  match l with
-  | nil => 0
-  | x :: l => Z.gcd x (list_gcd l)
-  end.
-
-Lemma list_gcd_nonneg :
-  forall l, 0 <= list_gcd l.
-Proof.
-  destruct l.
-  - simpl; lia.
-  - simpl. apply Z.gcd_nonneg.
-Qed.
-
-Lemma list_gcd_div :
-  forall l x, In x l -> (list_gcd l | x).
-Proof.
-  induction l.
-  - intros; simpl in *; tauto.
-  - intros x [Ha | Hx].
-    + rewrite <- Ha. simpl. apply Z.gcd_divide_l.
-    + transitivity (list_gcd l).
-      * simpl; apply Z.gcd_divide_r.
-      * auto.
-Qed.
-
 Module VplCanonizerZ.
 
   Definition canonize_constraint_Z (c : list Z * Z) :=
@@ -1547,19 +1383,6 @@ Proof.
   - intros H. apply mayReturn_alarm in H. tauto.
 Qed.
 
-Fixpoint and_all l :=
-  match l with
-  | nil => TConstantTest true
-  | x :: l => make_and x (and_all l)
-  end.
-
-Theorem and_all_correct :
-  forall l env, eval_test env (and_all l) = forallb (eval_test env) l.
-Proof.
-  induction l; simpl in *; [auto|].
-  intros; rewrite make_and_correct, IHl; auto.
-Qed.
-
 Definition make_affine_test n c := make_le (make_linear_expr n (fst c)) (Constant (snd c)).
 
 Lemma make_affine_test_correct :
@@ -1574,7 +1397,7 @@ Definition scan_dimension (n : nat) (inner : stmt) (p : polyhedron) : imp stmt :
   | Some c =>
     let '(result, test) := solve_eq n c in
     let cstrs := map (fun c1 => make_affine_test n (make_constraint_with_eq n c c1)) (filter (fun c => negb (nth n (fst c) 0 =? 0)) p) in
-    pure (Guard (make_and test (and_all cstrs)) (Loop result (Sum result (Constant 1)) inner))
+    pure (make_guard (make_and test (and_all cstrs)) (make_let result inner))
   | None => 
     BIND lb <- res_to_alarm (Constant 0) (find_lower_bound n p) -;
     BIND ub <- res_to_alarm (Constant 0) (find_upper_bound n p) -;
@@ -1594,13 +1417,13 @@ Proof.
   unfold scan_dimension in Hst.
   destruct (find_eq n pol) as [c|] eqn:Hfindeq.
   - destruct (solve_eq n c) as [result test] eqn:Hsolve. apply mayReturn_pure in Hst; rewrite <- Hst.
-    match goal with [ Hst : Guard ?T _ = _ |- _ ] => set (test1 := T) end.
+    match goal with [ Hst : make_guard ?T _ = _ |- _ ] => set (test1 := T) end.
     assert (Hcnth : 0 < nth n (fst c) 0) by (eapply find_eq_nth; eauto).
     destruct (eval_test env test1) eqn:Htest1.
     + exists (eval_expr env result). exists (eval_expr env (Sum result (Constant 1))). split.
       * split.
-        -- intros Hsem. inversion_clear Hsem; [|congruence]. inversion_clear H. auto.
-        -- intros Hsem; constructor; [|auto]. constructor; auto.
+        -- intros Hsem. rewrite make_guard_correct, Htest1 in Hsem. unfold make_let in Hsem. inversion_clear Hsem. auto.
+        -- intros Hsem. rewrite make_guard_correct, Htest1. unfold make_let. constructor; auto.
       * intros x. simpl.
         unfold test1 in Htest1. rewrite make_and_correct in Htest1; reflect.
         rewrite and_all_correct in Htest1. destruct Htest1 as [Htest Hcstr].
@@ -1620,8 +1443,8 @@ Proof.
            rewrite <- app_nil_r. f_equiv.
     + exists 0. exists 0. split.
       * split.
-        -- intros Hsem. inversion_clear Hsem; [congruence|]. constructor; lia.
-        -- intros Hsem. inversion_clear Hsem; [|lia]. apply LGuardFalse. auto.
+        -- intros Hsem. rewrite make_guard_correct, Htest1 in Hsem; rewrite Hsem. constructor; lia.
+        -- intros Hsem. rewrite make_guard_correct, Htest1. inversion_clear Hsem; [|lia]. reflexivity.
       * split; [|lia]. intros H. exfalso.
         enough (eval_test env test1 = true) by congruence.
         unfold test1. rewrite make_and_correct, and_all_correct, forallb_map. reflect.
@@ -1840,7 +1663,7 @@ Qed.
 Definition generate d n pi :=
   BIND st <- generate_loop d n pi -;
   BIND ctx <- project_invariant_export ((n - d)%nat, pi.(pi_poly)) -;
-  pure (Guard (make_poly_test (n - d)%nat ctx) st).
+  pure (make_guard (make_poly_test (n - d)%nat ctx) st).
 
 Theorem generate_preserves_sem :
   forall d n pi env mem1 mem2,
@@ -1854,14 +1677,16 @@ Proof.
   intros d n pi env mem1 mem2 Hd st Hgen Hloop Henv Hsize.
   bind_imp_destruct Hgen st1 H. bind_imp_destruct Hgen ctx Hctx.
   apply mayReturn_pure in Hgen.
-  rewrite <- Hgen in *. inversion_clear Hloop.
+  rewrite <- Hgen in *.
+  rewrite make_guard_correct in Hloop.
+  destruct (eval_test env (make_poly_test (n - d)%nat ctx)) eqn:Htest.
   - eapply generate_loop_preserves_sem; eauto.
     rewrite <- (project_invariant_export_correct _ _ _ _ Hctx) by eauto.
     erewrite <- make_poly_test_correct; [|apply Henv]. auto.
-  - apply PolyLexDone. intros n0 p. unfold env_scan.
+  - rewrite Hloop. apply PolyLexDone. intros n0 p. unfold env_scan.
     destruct n0; simpl in *; [|destruct n0]; auto. reflect.
     rewrite rev_length; rewrite Henv.
-    rewrite make_poly_test_correct in H0; auto.
+    rewrite make_poly_test_correct in Htest; auto.
     destruct (is_eq (rev env) (resize (n - d)%nat p)) eqn:Hpenv; auto.
     destruct (in_poly p pi.(pi_poly)) eqn:Hpin; auto. exfalso.
     eapply project_invariant_inclusion in Hpin.

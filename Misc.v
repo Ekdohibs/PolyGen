@@ -434,3 +434,192 @@ Proof.
   - intros; simpl in *; tauto.
   - intros x H; simpl in *; destruct H as [H | H]; [|specialize (IHl x H)]; lia.
 Qed.
+
+(** * Extra results on [gcd] on [positive] *)
+
+Definition flip_ggcd (gg : positive * (positive * positive)) := (fst gg, (snd (snd gg), fst (snd gg))).
+
+Lemma ggcdn_comm :
+  forall n a b, Pos.ggcdn n b a = flip_ggcd (Pos.ggcdn n a b).
+Proof.
+  induction n.
+  - intros; simpl; auto.
+  - intros; destruct a; destruct b; simpl; try reflexivity;
+      [rewrite Pos.compare_antisym; destruct (a ?= b)%positive eqn:Hab| | |];
+      try (rewrite IHn; simpl; destruct Pos.ggcdn as (g,(u,v)); simpl; reflexivity).
+    simpl.
+    apply Pos.compare_eq in Hab; rewrite Hab; reflexivity.
+Qed.
+
+Lemma ggcd_comm :
+  forall a b, Pos.ggcd b a = flip_ggcd (Pos.ggcd a b).
+Proof.
+  intros a b. unfold Pos.ggcd. rewrite <- ggcdn_comm.
+  f_equal. lia.
+Qed.
+
+Lemma divide_mul_cancel_l p q r : (p * q | p * r)%positive -> (q | r)%positive.
+Proof.
+  intros [x H]. exists x. nia.
+Qed.
+
+Lemma divide_mul2_l p q r : (q | r)%positive -> (p * q | p * r)%positive.
+Proof.
+  intros [x H]. exists x. nia.
+Qed.
+
+Lemma divide_mul_cancel_r p q r : (q * p | r * p)%positive -> (q | r)%positive.
+Proof.
+  intros [x H]. exists x. nia.
+Qed.
+
+Lemma divide_mul2_r p q r : (q | r)%positive -> (q * p | r * p)%positive.
+Proof.
+  intros [x H]. exists x. nia.
+Qed.
+
+Lemma divide_mul_cancel_l_iff p q r : (p * q | p * r)%positive <-> (q | r)%positive.
+Proof.
+  split; [apply divide_mul_cancel_l | apply divide_mul2_l].
+Qed.
+
+Lemma divide_mul_cancel_r_iff p q r : (q * p | r * p)%positive <-> (q | r)%positive.
+Proof.
+  split; [apply divide_mul_cancel_r | apply divide_mul2_r].
+Qed.
+
+Lemma divide_antisym p q : (p | q)%positive -> (q | p)%positive -> p = q.
+Proof.
+  intros [a Ha] [b Hb]. nia.
+Qed.
+
+Lemma divide_refl p : (p | p)%positive.
+Proof.
+  exists 1%positive. lia.
+Qed.
+
+Lemma divide_trans p q r : (p | q)%positive -> (q | r)%positive -> (p | r)%positive.
+Proof.
+  intros [x Hx] [y Hy]; exists (x * y)%positive; nia.
+Qed.
+
+Lemma gcd_spec a b p : (forall q, ((q | a)%positive /\ (q | b)%positive) <-> (q | p)%positive) <-> p = Pos.gcd a b.
+Proof.
+  split.
+  - intros Hg. 
+    apply divide_antisym.
+    + generalize (divide_refl p). intros H; rewrite <- Hg in H; destruct H. apply Pos.gcd_greatest; auto.
+    + apply Hg; split; [apply Pos.gcd_divide_l | apply Pos.gcd_divide_r].
+  - intros Hp; rewrite Hp. intros q. split.
+    + intros [Ha Hb]; apply Pos.gcd_greatest; auto.
+    + intros Hd; split; eapply divide_trans; [exact Hd | apply Pos.gcd_divide_l | exact Hd | apply Pos.gcd_divide_r].
+Qed.
+
+Lemma gcd_mul_k k a b : (Pos.gcd (k * a) (k * b) = k * Pos.gcd a b)%positive.
+Proof.
+  generalize (Pos.gcd_greatest (k * a) (k * b) k)%positive. intros H; destruct H.
+  - exists a; nia.
+  - exists b; nia.
+  - rewrite H; rewrite Pos.mul_comm. f_equal.
+    symmetry in H. rewrite Pos.mul_comm in H. rewrite <- gcd_spec in H.
+    rewrite <- gcd_spec. intros q. specialize (H (k * q)%positive).
+    rewrite !divide_mul_cancel_l_iff in H. auto.
+Qed.
+
+Lemma gcd_greatest_mul a b k p : (p | k * a)%positive -> (p | k * b)%positive -> (p | k * Pos.gcd a b)%positive.
+Proof.
+  rewrite <- gcd_mul_k.
+  apply Pos.gcd_greatest.
+Qed.
+
+Definition lcm a b := let '(g, (aa, bb)) := Pos.ggcd a b in (aa * b)%positive.
+
+Lemma lcm_comm a b : lcm a b = lcm b a.
+Proof.
+  unfold lcm.
+  generalize (Pos.ggcd_correct_divisors a b).
+  rewrite ggcd_comm with (a := a) (b := b); destruct Pos.ggcd as (g, (u, v)).
+  simpl. nia.
+Qed.
+
+Lemma divide_lcm_r a b : (b | lcm a b)%positive.
+Proof.
+  unfold lcm.
+  remember (Pos.ggcd a b) as u.
+  destruct u as [g [aa bb]].
+  exists aa. reflexivity.
+Qed.
+
+Lemma divide_lcm_l a b : (a | lcm a b)%positive.
+Proof.
+  rewrite lcm_comm. apply divide_lcm_r.
+Qed.
+
+Lemma lcm_gcd_mul a b : (lcm a b * Pos.gcd a b = a * b)%positive.
+Proof.
+  unfold lcm.
+  generalize (Pos.ggcd_correct_divisors a b).
+  rewrite <- Pos.ggcd_gcd.
+  destruct Pos.ggcd as (g, (u, v)); intros [Hu Hv]. simpl.
+  nia.
+Qed.
+
+Lemma lcm_smallest : forall a b p, (a | p)%positive -> (b | p)%positive -> (lcm a b | p)%positive.
+Proof.
+  intros a b p [x Hx] [y Hy].
+  apply divide_mul_cancel_r with (p := Pos.gcd a b).
+  rewrite lcm_gcd_mul.
+  apply gcd_greatest_mul; [exists y; rewrite Hy | exists x; rewrite Hx]; nia.
+Qed.
+
+Lemma lcm_one : forall a, lcm 1%positive a = a.
+Proof.
+  intros a. unfold lcm. reflexivity.
+Qed.
+
+
+(** * gcd of lists of [Z] *)
+
+Fixpoint list_gcd l :=
+  match l with
+  | nil => 0
+  | x :: l => Z.gcd x (list_gcd l)
+  end.
+
+Lemma list_gcd_nonneg :
+  forall l, 0 <= list_gcd l.
+Proof.
+  destruct l.
+  - simpl; lia.
+  - simpl. apply Z.gcd_nonneg.
+Qed.
+
+Lemma list_gcd_div :
+  forall l x, In x l -> (list_gcd l | x).
+Proof.
+  induction l.
+  - intros; simpl in *; tauto.
+  - intros x [Ha | Hx].
+    + rewrite <- Ha. simpl. apply Z.gcd_divide_l.
+    + transitivity (list_gcd l).
+      * simpl; apply Z.gcd_divide_r.
+      * auto.
+Qed.
+
+(** * lcm of lists of [positive] *)
+
+Fixpoint list_lcm l :=
+  match l with
+  | nil => 1%positive
+  | x :: l => lcm x (list_lcm l)
+  end.
+
+Lemma list_lcm_correct :
+  forall x l, In x l -> (x | list_lcm l)%positive.
+Proof.
+  intros x l. induction l.
+  - intros; simpl in *; tauto.
+  - intros [Ha | Hl]; simpl in *.
+    + rewrite Ha. apply divide_lcm_l.
+    + eapply divide_trans; [apply IHl; auto|apply divide_lcm_r].
+Qed.

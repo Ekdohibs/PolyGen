@@ -202,6 +202,21 @@ Proof.
 Qed.
 
 
+
+Fixpoint and_all l :=
+  match l with
+  | nil => TConstantTest true
+  | x :: l => make_and x (and_all l)
+  end.
+
+Theorem and_all_correct :
+  forall l env, eval_test env (and_all l) = forallb (eval_test env) l.
+Proof.
+  induction l; simpl in *; [auto|].
+  intros; rewrite make_and_correct, IHl; auto.
+Qed.
+
+
 Inductive stmt :=
 | Loop : expr -> expr -> stmt -> stmt
 | Instr : instr -> list expr -> stmt
@@ -226,3 +241,50 @@ Inductive loop_semantics : stmt -> list Z -> mem -> mem -> Prop :=
 | LLoop : forall env lb ub st mem1 mem2,
     iter_semantics (fun x => loop_semantics st (x :: env)) (eval_expr env lb) (eval_expr env ub) mem1 mem2 ->
     loop_semantics (Loop lb ub st) env mem1 mem2.
+
+Definition make_guard test inner :=
+  match test with
+  | TConstantTest true => inner
+  | TConstantTest false => Seq nil
+  | test => Guard test inner
+  end.
+
+Lemma make_guard_correct :
+  forall test inner env mem1 mem2,
+    loop_semantics (make_guard test inner) env mem1 mem2 <->
+    (if eval_test env test then loop_semantics inner env mem1 mem2 else mem1 = mem2).
+Proof.
+  intros test inner env mem1 mem2.
+  split.
+  - destruct (eval_test env test) eqn:Htest.
+    + unfold make_guard; intros H; destruct test; simpl;
+        try (inversion_clear H; congruence).
+      simpl in *. rewrite Htest in H. auto.
+    + unfold make_guard; intros H; destruct test; simpl;
+        try (inversion_clear H; congruence).
+      simpl in *. rewrite Htest in H. inversion_clear H; auto.
+  - destruct (eval_test env test) eqn:Htest.
+    + unfold make_guard; intros H; destruct test; simpl;
+        try (apply LGuardTrue; auto).
+      simpl in Htest; rewrite Htest; auto.
+    + unfold make_guard; intros H; destruct test; simpl; rewrite H;
+        try (apply LGuardFalse; auto).
+      simpl in Htest; rewrite Htest; auto.
+      constructor; auto.
+Qed.
+
+Definition make_let value inner :=
+  Loop value (Sum value (Constant 1)) inner.
+
+Lemma make_let_correct :
+  forall value inner env mem1 mem2,
+    loop_semantics (make_let value inner) env mem1 mem2 <-> loop_semantics inner (eval_expr env value :: env) mem1 mem2.
+Proof.
+  intros value inner env mem1 mem2.
+  split.
+  - unfold make_let. intros H; inversion_clear H.
+    inversion_clear H0; [simpl in H; lia|].
+    inversion H2; [congruence|simpl in H0; lia].
+  - intros H. unfold make_let. constructor.
+    simpl. eapply IProgress; [|apply H|apply IDone]; lia.
+Qed.
