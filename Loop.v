@@ -6,6 +6,7 @@ Open Scope Z_scope.
 Open Scope list_scope.
 
 Require Import Instr.
+Require Import Misc.
 
 (** * The semantics of the Loop language *)
 
@@ -239,7 +240,7 @@ Inductive loop_semantics : stmt -> list Z -> mem -> mem -> Prop :=
 | LGuardFalse : forall env t st mem,
     eval_test env t = false -> loop_semantics (Guard t st) env mem mem
 | LLoop : forall env lb ub st mem1 mem2,
-    iter_semantics (fun x => loop_semantics st (x :: env)) (eval_expr env lb) (eval_expr env ub) mem1 mem2 ->
+    iter_semantics (fun x => loop_semantics st (x :: env)) (Zrange (eval_expr env lb) (eval_expr env ub)) mem1 mem2 ->
     loop_semantics (Loop lb ub st) env mem1 mem2.
 
 Definition make_guard test inner :=
@@ -276,6 +277,14 @@ Qed.
 Definition make_let value inner :=
   Loop value (Sum value (Constant 1)) inner.
 
+Lemma Zrange_single :
+  forall x, Zrange x (x + 1) = (x :: nil).
+Proof.
+  intros x. unfold Zrange.
+  replace (x + 1 - x) with 1 by lia. simpl.
+  f_equal. lia.
+Qed.
+
 Lemma make_let_correct :
   forall value inner env mem1 mem2,
     loop_semantics (make_let value inner) env mem1 mem2 <-> loop_semantics inner (eval_expr env value :: env) mem1 mem2.
@@ -283,8 +292,9 @@ Proof.
   intros value inner env mem1 mem2.
   split.
   - unfold make_let. intros H; inversion_clear H.
-    inversion_clear H0; [simpl in H; lia|].
-    inversion H2; [congruence|simpl in H0; lia].
+    simpl in H0. rewrite Zrange_single in H0.
+    inversion_clear H0. inversion H1. congruence.
   - intros H. unfold make_let. constructor.
-    simpl. eapply IProgress; [|apply H|apply IDone]; lia.
+    rewrite Zrange_single.
+    econstructor; [|econstructor]. auto.
 Qed.

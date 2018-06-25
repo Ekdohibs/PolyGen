@@ -1,5 +1,5 @@
 Require Import ZArith.
-Require Import Psatz.
+Require Import List.
 
 Open Scope Z_scope.
 
@@ -9,22 +9,22 @@ Parameter instr : Type.
 Parameter mem : Type.
 Parameter instr_semantics : instr -> list Z -> mem -> mem -> Prop.
 
-(** * Iterating semantics between two bounds *)
+(** * Iterating semantics on a list *)
 
-Inductive iter_semantics (P : Z -> mem -> mem -> Prop) : Z -> Z -> mem -> mem -> Prop :=
-| IDone : forall lb ub mem, ub <= lb -> iter_semantics P lb ub mem mem
-| IProgress : forall lb ub mem1 mem2 mem3,
-    lb < ub -> P lb mem1 mem2 -> iter_semantics P (lb + 1) ub mem2 mem3 ->
-    iter_semantics P lb ub mem1 mem3.
+Inductive iter_semantics {A : Type} (P : A -> mem -> mem -> Prop) : list A -> mem -> mem -> Prop :=
+| IDone : forall mem, iter_semantics P nil mem mem
+| IProgress : forall x l mem1 mem2 mem3,
+    P x mem1 mem2 -> iter_semantics P l mem2 mem3 ->
+    iter_semantics P (x :: l) mem1 mem3.
 
-Lemma iter_semantics_map (P Q : Z -> mem -> mem -> Prop) :
-  forall lb ub mem1 mem2,
-    (forall x mem1 mem2, lb <= x < ub -> P x mem1 mem2 -> Q x mem1 mem2) ->
-    iter_semantics P lb ub mem1 mem2 ->
-    iter_semantics Q lb ub mem1 mem2.
+Lemma iter_semantics_map {A : Type} (P Q : A -> mem -> mem -> Prop) :
+  forall l mem1 mem2,
+    (forall x mem1 mem2, In x l -> P x mem1 mem2 -> Q x mem1 mem2) ->
+    iter_semantics P l mem1 mem2 ->
+    iter_semantics Q l mem1 mem2.
 Proof.
-  intros lb ub mem1 mem2 Himp Hsem.
+  intros l mem1 mem2 Himp Hsem.
   induction Hsem; econstructor; eauto; [eapply Himp|eapply IHHsem]; eauto.
-  - lia.
-  - intros; apply Himp; auto; lia.
+  - simpl; auto.
+  - intros; apply Himp; simpl; auto.
 Qed.

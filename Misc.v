@@ -2,6 +2,7 @@ Require Import ZArith.
 Require Import List.
 Require Import Bool.
 Require Import Psatz.
+Require Import Setoid.
 
 Open Scope Z_scope.
 
@@ -87,6 +88,18 @@ Lemma map_nth_error_none :
   forall A B n (f : A -> B) l, nth_error l n = None -> nth_error (map f l) n = None.
 Proof.
   intros; rewrite nth_error_None in *; rewrite map_length; auto.
+Qed.
+
+Lemma nth_error_map_iff :
+  forall A B (f : A -> B) n l x, nth_error (map f l) n = Some x <-> (exists y, nth_error l n = Some y /\ x = f y).
+Proof.
+  intros A B f. induction n.
+  - intros [|y l] x; simpl.
+    + split; [congruence|firstorder congruence].
+    + split; intros; [exists y|]; firstorder congruence.
+  - intros [|y l] x; simpl.
+    + split; [|intros [y Hy]]; intuition congruence.
+    + apply IHn.
 Qed.
 
 Lemma nth_skipn :
@@ -318,6 +331,28 @@ Proof.
     f_equal. rewrite map_app. simpl. reflexivity.
 Qed.
 
+Lemma n_range_length :
+  forall n, length (n_range n) = n.
+Proof.
+  induction n.
+  - simpl; auto.
+  - simpl; rewrite app_length, IHn; simpl; lia.
+Qed.
+
+Lemma n_range_nth_error :
+  forall n m x, nth_error (n_range n) m = Some x <-> ((m < n)%nat /\ x = m).
+Proof.
+  induction n.
+  - intros; simpl. destruct m; simpl; split; (congruence || lia).
+  - intros m x; simpl.
+    destruct ((m <? n)%nat) eqn:Hnm; reflect.
+    + rewrite nth_error_app1 by (rewrite n_range_length; lia). rewrite IHn; lia.
+    + rewrite nth_error_app2 by (rewrite n_range_length; lia). rewrite n_range_length.
+      destruct (m - n)%nat as [|u] eqn:Hmn; simpl.
+      * replace m with n by lia. intuition (congruence || lia).
+      * destruct u; simpl; intuition (congruence || lia).
+Qed.
+
 Definition Zrange lb ub := map (fun n => lb + Z.of_nat n) (n_range (Z.to_nat (ub - lb))).
 
 Lemma Zrange_empty :
@@ -363,6 +398,16 @@ Proof.
   - intros H. exists (Z.to_nat (n - lb)). split.
     + rewrite Z2Nat.id; lia.
     + rewrite n_range_in. apply Z2Nat.inj_lt; lia.
+Qed.
+
+Lemma Zrange_nth_error :
+  forall n x lb ub, nth_error (Zrange lb ub) n = Some x <-> (lb <= x < ub /\ x = lb + Z.of_nat n).
+Proof.
+  intros n x lb ub. unfold Zrange.
+  rewrite nth_error_map_iff.
+  under_exists nat ltac:(fun _ => rewrite n_range_nth_error).
+  setoid_replace (n < Z.to_nat (ub - lb))%nat with (Z.of_nat n < ub - lb) using relation iff; [firstorder lia|].
+  destruct (ub - lb); simpl; lia.
 Qed.
 
 (** * Results on integer division *)

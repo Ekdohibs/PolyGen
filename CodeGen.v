@@ -53,13 +53,13 @@ Inductive poly_loop_semantics : poly_stmt -> list Z -> mem -> mem -> Prop :=
     in_poly (rev env) t = false -> poly_loop_semantics (PGuard t st) env mem mem
 | PLLoop : forall env p lb ub st mem1 mem2,
     (forall x, in_poly (rev (x :: env)) p = true <-> lb <= x < ub) ->
-    iter_semantics (fun x => poly_loop_semantics st (x :: env)) lb ub mem1 mem2 ->
+    iter_semantics (fun x => poly_loop_semantics st (x :: env)) (Zrange lb ub) mem1 mem2 ->
     poly_loop_semantics (PLoop p st) env mem1 mem2.
 
 Lemma PLLoop_inv_sem :
   forall env p st mem1 mem2,
     poly_loop_semantics (PLoop p st) env mem1 mem2 ->
-    exists lb ub, (forall x, in_poly (rev (x :: env)) p = true <-> lb <= x < ub) /\ iter_semantics (fun x => poly_loop_semantics st (x :: env)) lb ub mem1 mem2.
+    exists lb ub, (forall x, in_poly (rev (x :: env)) p = true <-> lb <= x < ub) /\ iter_semantics (fun x => poly_loop_semantics st (x :: env)) (Zrange lb ub) mem1 mem2.
 Proof.
   intros env p st mem1 mem2 H. inversion_clear H.
   eexists; eexists; eauto.
@@ -1519,7 +1519,7 @@ Lemma scan_dimension_sem :
          forall env mem1 mem2,
            length env = n ->
            exists lb ub,
-             (loop_semantics st env mem1 mem2 <-> iter_semantics (fun x => loop_semantics inner (x :: env)) lb ub mem1 mem2) /\
+             (loop_semantics st env mem1 mem2 <-> iter_semantics (fun x => loop_semantics inner (x :: env)) (Zrange lb ub) mem1 mem2) /\
              (forall x, in_poly (rev (x :: env)) pol = true <-> lb <= x < ub).
 Proof.
   intros n inner pol st Hst env mem1 mem2 Henvlen.
@@ -1553,7 +1553,7 @@ Proof.
     + exists 0. exists 0. split.
       * split.
         -- intros Hsem. rewrite make_guard_correct, Htest1 in Hsem; rewrite Hsem. constructor; lia.
-        -- intros Hsem. rewrite make_guard_correct, Htest1. inversion_clear Hsem; [|lia]. reflexivity.
+        -- intros Hsem. rewrite make_guard_correct, Htest1. inversion_clear Hsem. reflexivity.
       * split; [|lia]. intros H. exfalso.
         enough (eval_test env test1 = true) by congruence.
         unfold test1. rewrite make_and_correct, and_all_correct, forallb_app, !forallb_map. reflect.
@@ -1592,7 +1592,7 @@ Proof.
     + exists 0. exists 0. rewrite make_guard_correct, Htest1. split.
       * split.
         -- intros H; rewrite H. econstructor; lia.
-        -- intros H; inversion_clear H; [auto|lia].
+        -- intros H; inversion_clear H; reflexivity.
       * unfold test1 in Htest1. intros x. split; [|lia].
         intros H; unfold in_poly in H; rewrite forallb_forall in H.
         exfalso; eapply eq_true_false_abs; [|exact Htest1].
@@ -1822,14 +1822,21 @@ Proof.
         eapply project_next_r_inclusion; [|exact Hproj|].
         -- rewrite project_invariant_resize, resize_app by (rewrite rev_length; auto).
            apply Hinv.
-        -- intros c Hcin Hcnth. rewrite <- Hlbub in Hbounds.
+        -- intros c Hcin Hcnth. rewrite Zrange_in, <- Hlbub in Hbounds.
            unfold in_poly in Hbounds; rewrite forallb_forall in Hbounds. apply Hbounds.
            rewrite filter_In; reflect; auto.
       * intros x. apply env_scan_proper.
-      * intros x1 x2 m p. apply env_scan_inj_rev.
-      * intros x1 n1 p1 x2 n2 p2 Hcmp H1 H2.
+      * intros x1 k1 x2 k2 m p H1 H2 H3 H4. rewrite Zrange_nth_error in *.
+        enough (lb + Z.of_nat k1 = lb + Z.of_nat k2) by lia.
+        eapply env_scan_inj_rev; [destruct H3 as [? <-]; exact H1|destruct H4 as [? <-]; exact H2].
+      * intros x1 n1 p1 k1 x2 n2 p2 k2 Hcmp H1 H2 H3 H4.
+        rewrite Zrange_nth_error in *.
         apply env_scan_begin in H1; apply env_scan_begin in H2. simpl in *.
-        rewrite H1, H2 in Hcmp. eapply lex_app_not_gt; rewrite Hcmp. congruence.
+        rewrite H1, H2 in Hcmp.
+        enough (lb + Z.of_nat k2 <= lb + Z.of_nat k1) by lia.
+        eapply lex_app_not_gt.
+        destruct H3 as [? <-]; destruct H4 as [? <-].
+        rewrite Hcmp; congruence.
     + simpl. intros m p. rewrite env_scan_extend; eauto; try lia.
       * replace (S (n - S d)) with (n - d)%nat by lia. apply Hproj.
       * intros x; rewrite <- Hlbub. unfold in_poly; rewrite forallb_forall. apply forall_ext; intros c.

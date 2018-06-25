@@ -158,32 +158,39 @@ Proof.
 Qed.
 
 Theorem poly_lex_concat_seq :
-  forall to_scans lb ub prog mem1 mem2,
-    iter_semantics (fun x => poly_lex_semantics (to_scans x) prog) lb ub mem1 mem2 ->
+  forall A to_scans (l : list A) prog mem1 mem2,
+    iter_semantics (fun x => poly_lex_semantics (to_scans x) prog) l mem1 mem2 ->
     (forall x, wf_scan (to_scans x)) ->
-    (forall x1 x2 n p, to_scans x1 n p = true -> to_scans x2 n p = true -> x1 = x2) ->
-    (forall x1 n1 p1 x2 n2 p2, lex_compare p2 p1 = Lt -> to_scans x1 n1 p1 = true -> to_scans x2 n2 p2 = true -> x2 <= x1) ->
-    poly_lex_semantics (fun n p => existsb (fun x => to_scans x n p) (Zrange lb ub)) prog mem1 mem2.
+    (forall x1 k1 x2 k2 n p, to_scans x1 n p = true -> to_scans x2 n p = true -> nth_error l k1 = Some x1 -> nth_error l k2 = Some x2 -> k1 = k2) ->
+    (forall x1 n1 p1 k1 x2 n2 p2 k2, lex_compare p2 p1 = Lt -> to_scans x1 n1 p1 = true -> to_scans x2 n2 p2 = true -> nth_error l k1 = Some x1 -> nth_error l k2 = Some x2 -> (k2 <= k1)%nat) ->
+    poly_lex_semantics (fun n p => existsb (fun x => to_scans x n p) l) prog mem1 mem2.
 Proof.
-  intros to_scans lb ub prog mem1 mem2 Hsem.
-  induction Hsem as [lb ub mem Hempty|lb ub mem1 mem2 mem3 Hcontinue Hsem1 Hsem2 IH].
+  intros A to_scans l1 prog mem1 mem3 Hsem.
+  induction Hsem as [mem|x l mem1 mem2 mem3 Hsem1 Hsem2 IH].
   - intros Hwf Hscans Hcmp.
-    rewrite Zrange_empty by lia. simpl.
+    simpl.
     apply PolyLexDone; auto.
   - intros Hwf Hscans Hcmp.
     eapply poly_lex_semantics_extensionality.
     + eapply poly_lex_concat; [exact Hsem1| | | |apply IH; auto].
       * apply Hwf.
       * intros n p. simpl.
-        destruct (to_scans lb n p) eqn:Hscanl; [|auto]. right.
-        apply not_true_is_false; rewrite existsb_exists; intros [x [Hin Hscanx]].
-        rewrite Zrange_in in Hin. specialize (Hscans lb x n p Hscanl Hscanx). lia.
+        destruct (to_scans x n p) eqn:Hscanl; [|auto]. right.
+        apply not_true_is_false; rewrite existsb_exists; intros [x1 [Hin Hscanx1]].
+        apply In_nth_error in Hin; destruct Hin as [u Hu].
+        specialize (Hscans x O x1 (S u) n p Hscanl Hscanx1).
+        simpl in Hscans. intuition congruence.
       * intros n1 p1 n2 p2 H.
-        destruct (to_scans lb n1 p1) eqn:Hscanl; [|auto]. right.
-        apply not_true_is_false; rewrite existsb_exists; intros [x [Hin Hscanx]].
-        rewrite Zrange_in in Hin. specialize (Hcmp lb n1 p1 x n2 p2 H Hscanl Hscanx). lia.
-    + intros n p. simpl. rewrite Zrange_begin with (lb := lb) by lia.
-      simpl. reflexivity.
+        destruct (to_scans x n1 p1) eqn:Hscanl; [|auto]. right.
+        apply not_true_is_false; rewrite existsb_exists; intros [x1 [Hin Hscanx1]].
+        apply In_nth_error in Hin; destruct Hin as [u Hu].
+        specialize (Hcmp x n1 p1 O x1 n2 p2 (S u) H Hscanl Hscanx1).
+        intuition lia.
+      * intros x1 k1 x2 k2 n p H1 H2 H3 H4; specialize (Hscans x1 (S k1) x2 (S k2) n p).
+        intuition congruence.
+      * intros x1 n1 p1 k1 x2 n2 p2 k2 H1 H2 H3 H4 H5; specialize (Hcmp x1 n1 p1 (S k1) x2 n2 p2 (S k2)).
+        intuition lia.
+    + intros n p. simpl. reflexivity.
 Qed.
 
 (** * Translating a program from explicit scheduling to lexicographical scanning *)
