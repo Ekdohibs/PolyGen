@@ -762,6 +762,7 @@ Proof.
     rewrite <- IHp; [reflexivity|auto|unfold Cs_to_poly_Q; rewrite H2; reflexivity].
 Qed.
 
+
 Require Import Vpl.DomainInterfaces.
 
 Module AssertCstrD (Import D: WeakAbstractDomain QNum Cstr) <: HasAssert QNum Cstr D.
@@ -802,6 +803,7 @@ Module AssertCstrD (Import D: WeakAbstractDomain QNum Cstr) <: HasAssert QNum Cs
 End AssertCstrD.
 
 Require Import Vpl.PedraQ.
+
 Module CstrWeakDomain := BasicD <+ CstrD.
 Module CstrDomain <: AbstractDomain QNum Cstr := CstrWeakDomain <+ AssertCstrD CstrWeakDomain.
 

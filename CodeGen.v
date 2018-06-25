@@ -1626,31 +1626,25 @@ Lemma polyloop_to_loop_correct :
     length env = n ->
     poly_loop_semantics pstmt env mem1 mem2.
 Proof.
-  induction pstmt.
-  - intros n env mem1 mem2 st Hst Hsem Henv.
-    simpl in *. bind_imp_destruct Hst inner Hinner.
+  induction pstmt; intros n env mem1 mem2 st Hst Hsem Henv; simpl in *.
+  - bind_imp_destruct Hst inner Hinner.
     generalize (scan_dimension_sem _ _ _ _ Hst _ mem1 mem2 Henv).
     intros [lb [ub [H1 H2]]].
     econstructor; [exact H2|]. rewrite H1 in Hsem.
     eapply iter_semantics_map; [|exact Hsem].
     intros x mem3 mem4 Hx Hsem2. simpl in Hsem2. eapply IHpstmt; simpl; eauto.
-  - intros n env mem1 mem2 st Hst Hsem Henv.
-    simpl in *. apply mayReturn_pure in Hst. rewrite <- Hst in *.
+  - apply mayReturn_pure in Hst. rewrite <- Hst in *.
     inversion_clear Hsem. constructor.
     rewrite map_map in H.
     unfold eval_affine_expr. erewrite map_ext; [exact H|].
     intros [k a]; simpl. rewrite make_div_correct, make_affine_expr_correct by auto. reflexivity.
-  - intros n env mem1 mem2 st Hst Hsem Henv.
-    simpl in *. apply mayReturn_pure in Hst; rewrite <- Hst in *.
+  - apply mayReturn_pure in Hst. rewrite <- Hst in *.
     inversion_clear Hsem. econstructor; auto.
-  - intros n env mem1 mem2 st Hst Hsem Henv.
-    simpl in *.
-    bind_imp_destruct Hst u1 Hu1. bind_imp_destruct Hst u2 Hu2.
+  - bind_imp_destruct Hst u1 Hu1. bind_imp_destruct Hst u2 Hu2.
     apply mayReturn_pure in Hst; rewrite <- Hst in *.
     inversion_clear Hsem; inversion_clear H0. replace mem2 with mem4 by (inversion_clear H2; auto).
     econstructor; [eapply IHpstmt1|eapply IHpstmt2]; eauto.
-  - intros n env mem1 mem2 st Hst Hsem Henv.
-    simpl in *. bind_imp_destruct Hst inner Hinner. apply mayReturn_pure in Hst; rewrite <- Hst in *.
+  - bind_imp_destruct Hst inner Hinner. apply mayReturn_pure in Hst; rewrite <- Hst in *.
     rewrite make_guard_correct in Hsem.
     rewrite make_poly_test_correct in Hsem by auto.
     destruct (in_poly (rev env) p) eqn:Htest.
@@ -1896,8 +1890,96 @@ Proof.
   eapply polyloop_to_loop_correct; eauto.
 Qed.
 
+Fixpoint make_seq l :=
+  match l with
+  | nil => PSkip
+  | x :: l => PSeq x (make_seq l)
+  end.
 
+(* Workaround a bug of Coq; see https://github.com/coq/coq/issues/7875 *)
+Fixpoint mymap {A B : Type} (f : A -> B) (l : list A) : list B :=
+  match l with
+  | nil => nil
+  | x :: l => f x :: mymap f l
+  end.
 
+Definition mapM {A B : Type} (f : A -> imp B) (l : list A) : imp (list B) := sequence (mymap f l).
+
+Definition update_poly pi pol :=
+  {| pi_instr := pi.(pi_instr) ; pi_poly := pol ; pi_schedule := pi.(pi_schedule) ; pi_transformation := pi.(pi_transformation) |}.
+
+Axiom dummy_pi : Polyhedral_Instruction.
+
+Axiom poly_inter : polyhedron -> polyhedron -> imp polyhedron.
+Axiom split_and_sort : list polyhedron -> imp (list (polyhedron * list nat)).
+
+Fixpoint generate_loop_many (d : nat) (n : nat) (pis : list Polyhedral_Instruction) : imp poly_stmt :=
+  match d with
+  | O => pure (make_seq (map (fun pi => PInstr pi.(pi_instr) (map (fun t => (1%positive, t)) pi.(pi_transformation))) pis))
+  | S d1 =>
+    BIND projs <- mapM (fun pi => project ((n - d1)%nat, pi.(pi_poly))) pis -;
+    BIND projsep <- split_and_sort projs -;
+    BIND inner <- mapM (fun '(pol, pl) =>
+         BIND npis <- mapM (fun t => let pi := nth t pis dummy_pi in
+                                 BIND npol <- poly_inter pi.(pi_poly) pol -; pure (update_poly pi npol)) pl -;
+         BIND inside <- generate_loop_many d1 n npis -;
+         pure (PLoop pol inside)) projsep -;
+    pure (make_seq inner)
+  end.
+
+Definition pis_have_dimension pis n :=
+  forallb (fun pi => (poly_nrl (pi.(pi_poly)) <=? n)%nat) pis = true.
+
+Definition generate_invariant n pis env :=
+  forall pi, In pi pis -> project_invariant n pi.(pi_poly) (rev env).
+
+(*
+Theorem generate_loop_many_preserves_sem :
+  forall d n pis env mem1 mem2,
+    (d <= n)%nat ->
+    WHEN st <- generate_loop_many d n pis THEN
+    poly_loop_semantics st env mem1 mem2 ->
+    length env = (n - d)%nat ->
+    pis_have_dimension pis n ->
+    generate_invariant (n - d)%nat pis env ->
+    env_poly_lex_semantics (rev env) n pis mem1 mem2.
+Proof.
+  induction d.
+  - intros n pis env mem1 mem2 Hnd st Hgen Hsem Hlen Hpidim Hinv.
+    admit. (*
+    eapply generate_loop_single_point; eauto; try lia.
+    eapply project_id; eauto.
+    rewrite Nat.sub_0_r in Hinv. auto. *)
+  - intros n pis env mem1 mem2 Hnd st Hgen Hsem Hlen Hpidim Hinv. simpl in *.
+    bind_imp_destruct Hgen projs Hprojs.
+    bind_imp_destruct Hgen projsep Hprojsep.
+    bind_imp_destruct Hgen inner Hinner.
+    apply mayReturn_pure in Hgen. rewrite <- Hgen in Hsem; clear Hgen.
+    apply PLLoop_inv_sem in Hsem.
+    destruct Hsem as [lb [ub [Hlbub Hsem]]].
+    unfold env_poly_lex_semantics in *.
+    eapply poly_lex_semantics_extensionality.
+    + apply poly_lex_concat_seq with (to_scans := fun x => env_scan (pi :: nil) (rev (x :: env)) n).
+      * eapply iter_semantics_map; [|apply Hsem].
+        intros x mem3 mem4 Hbounds Hloop. eapply IHd with (env := x :: env); simpl; eauto; try lia.
+        replace (n - d)%nat with (S (n - S d))%nat in * by lia.
+        eapply project_next_r_inclusion; [|exact Hproj|].
+        -- rewrite project_invariant_resize, resize_app by (rewrite rev_length; auto).
+           apply Hinv.
+        -- intros c Hcin Hcnth. rewrite <- Hlbub in Hbounds.
+           unfold in_poly in Hbounds; rewrite forallb_forall in Hbounds. apply Hbounds.
+           rewrite filter_In; reflect; auto.
+      * intros x. apply env_scan_proper.
+      * intros x1 x2 m p. apply env_scan_inj_rev.
+      * intros x1 n1 p1 x2 n2 p2 Hcmp H1 H2.
+        apply env_scan_begin in H1; apply env_scan_begin in H2. simpl in *.
+        rewrite H1, H2 in Hcmp. eapply lex_app_not_gt; rewrite Hcmp. congruence.
+    + simpl. intros m p. rewrite env_scan_extend; eauto; try lia.
+      * replace (S (n - S d)) with (n - d)%nat by lia. apply Hproj.
+      * intros x; rewrite <- Hlbub. unfold in_poly; rewrite forallb_forall. apply forall_ext; intros c.
+        split; intros H; intros; apply H; rewrite filter_In in *; reflect; tauto.
+Qed.
+*)
 
 
 
