@@ -6,6 +6,8 @@ Open Scope Z_scope.
 (** * The basic instructions and their semantics *)
 
 Parameter instr : Type.
+Parameter dummy_instr : instr.
+
 Parameter mem : Type.
 Parameter instr_semantics : instr -> list Z -> mem -> mem -> Prop.
 

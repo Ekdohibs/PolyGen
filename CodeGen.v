@@ -56,6 +56,14 @@ Inductive poly_loop_semantics : poly_stmt -> list Z -> mem -> mem -> Prop :=
     iter_semantics (fun x => poly_loop_semantics st (x :: env)) (Zrange lb ub) mem1 mem2 ->
     poly_loop_semantics (PLoop p st) env mem1 mem2.
 
+Lemma PLInstr_inv_sem :
+  forall i es env mem1 mem2,
+    poly_loop_semantics (PInstr i es) env mem1 mem2 ->
+    instr_semantics i (map (eval_affine_expr env) es) mem1 mem2.
+Proof.
+  intros i es env mem1 mem2 Hsem. inversion_clear Hsem. auto.
+Qed.
+
 Lemma PLLoop_inv_sem :
   forall env p st mem1 mem2,
     poly_loop_semantics (PLoop p st) env mem1 mem2 ->
@@ -1395,20 +1403,22 @@ Proof.
 Qed.
 *)
 
-Definition canPrecede n (pol1 pol2 proj2 : polyhedron) :=
+Definition canPrecede n pol1 pol2 :=
+  forall p1 x, in_poly p1 pol1 = true -> in_poly (assign n x p1) pol2 = true -> nth n p1 0 < x.
+
+Definition check_canPrecede n (pol1 pol2 proj2 : polyhedron) :=
   let g2 := filter (fun c => nth n (fst c) 0 <? 0) pol2 in
   isBottom (pol1 ++ proj2 ++ g2).
 
-Lemma canPrecede_correct :
+Lemma check_canPrecede_correct :
   forall n pol1 pol2 proj2,
     isExactProjection n pol2 proj2 ->
-    If canPrecede n pol1 pol2 proj2 THEN
-       forall p1 x, in_poly p1 pol1 = true -> in_poly (assign n x p1) pol2 = true -> nth n p1 0 < x.
+    If check_canPrecede n pol1 pol2 proj2 THEN canPrecede n pol1 pol2.
 Proof.
   intros n pol1 pol2 proj2 Hproj2 b Hprec.
   destruct b; simpl; [|auto].
   intros p1 x Hp1 Hpx.
-  unfold canPrecede in Hprec. apply isBottom_correct_1 in Hprec; simpl in Hprec.
+  unfold check_canPrecede in Hprec. apply isBottom_correct_1 in Hprec; simpl in Hprec.
   specialize (Hprec p1). rewrite !in_poly_app in Hprec. reflect.
   rewrite Hp1 in Hprec.
   apply isExactProjection_weaken1 in Hproj2. eapply isExactProjection_assign_1 in Hproj2; [|exact Hpx].
@@ -1903,6 +1913,15 @@ Fixpoint make_seq l :=
   | x :: l => PSeq x (make_seq l)
   end.
 
+Lemma make_seq_semantics :
+  forall l env mem1 mem2, poly_loop_semantics (make_seq l) env mem1 mem2 <->
+                     iter_semantics (fun s => poly_loop_semantics s env) l mem1 mem2.
+Proof.
+  induction l.
+  - intros; split; intros H; inversion_clear H; constructor.
+  - intros; split; simpl; intros H; inversion_clear H; econstructor; eauto; rewrite IHl in *; eauto.
+Qed.
+
 (* Workaround a bug of Coq; see https://github.com/coq/coq/issues/7875 *)
 Fixpoint mymap {A B : Type} (f : A -> B) (l : list A) : list B :=
   match l with
@@ -1912,23 +1931,461 @@ Fixpoint mymap {A B : Type} (f : A -> B) (l : list A) : list B :=
 
 Definition mapM {A B : Type} (f : A -> imp B) (l : list A) : imp (list B) := sequence (mymap f l).
 
+Lemma nth_error_nth :
+  forall (A : Type) n (l : list A) d x, nth_error l n = Some x -> nth n l d = x.
+Proof.
+  intros A; induction n.
+  - intros l d x; destruct l; simpl in *; congruence.
+  - intros l d x; destruct l; simpl in *; [congruence | apply IHn].
+Qed.
+
+Lemma nth_error_nth_iff :
+  forall (A : Type) n (l : list A) d x, (n < length l)%nat -> nth_error l n = Some x <-> nth n l d = x.
+Proof.
+  intros A; induction n.
+  - intros l d x Hn; destruct l; simpl in *; [lia | split; congruence].
+  - intros l d x Hn; destruct l; simpl in *; [|apply IHn]; lia.
+Qed.
+
+Lemma Forall2_nth_error :
+  forall (A B : Type) (R : A -> B -> Prop) n xs ys x, Forall2 R xs ys -> nth_error xs n = Some x -> exists y, nth_error ys n = Some y /\ R x y.
+Proof.
+  intros A B R. induction n.
+  - intros xs ys x Hforall Hnth; destruct Hforall; simpl in *; [|exists y; split]; try congruence.
+  - intros xs ys x Hforall Hnth; destruct Hforall; simpl in *; [congruence|].
+    eapply IHn; eauto.
+Qed.
+
+Lemma Forall2_sym :
+  forall (A B : Type) (R : A -> B -> Prop) xs ys, Forall2 R xs ys -> Forall2 (fun y x => R x y) ys xs.
+Proof.
+  intros A B R xs ys Hforall. induction Hforall; constructor; auto.
+Qed.
+
+Lemma Forall2_imp :
+  forall (A B : Type) (R R' : A -> B -> Prop) xs ys, (forall x y, R x y -> R' x y) -> Forall2 R xs ys -> Forall2 R' xs ys.
+Proof.
+  intros A B R R' xs ys H Hforall. induction Hforall; constructor; auto.
+Qed.
+
+Lemma Forall2_sym_iff :
+  forall (A B : Type) (R : A -> B -> Prop) xs ys, Forall2 R xs ys <-> Forall2 (fun y x => R x y) ys xs.
+Proof.
+  intros A B R xs ys. split.
+  - apply Forall2_sym.
+  - intros H; apply Forall2_sym in H. eapply Forall2_imp; eauto.
+Qed.
+
+Lemma Forall2_map_left :
+  forall (A B C : Type) (R : B -> C -> Prop) (f : A -> B) xs ys, Forall2 R (map f xs) ys <-> Forall2 (fun x y => R (f x) y) xs ys.
+Proof.
+  intros A B C R f xs ys. split.
+  - intros H. remember (map f xs) as zs; generalize xs Heqzs; clear xs Heqzs. induction H.
+    + intros xs; destruct xs; simpl in *; intros; [constructor|congruence].
+    + intros xs; destruct xs; simpl in *; [congruence|].
+      intros; constructor; [|apply IHForall2]; congruence.
+  - intros H; induction H; simpl in *; econstructor; auto.
+Qed.
+
+Lemma Forall2_map_right :
+  forall (A B C : Type) (R : A -> C -> Prop) (f : B -> C) xs ys, Forall2 R xs (map f ys) <-> Forall2 (fun x y => R x (f y)) xs ys.
+Proof.
+  intros A B C R f xs ys.
+  rewrite Forall2_sym_iff, Forall2_map_left, Forall2_sym_iff.
+  reflexivity.
+Qed.
+
+(* meh *)
+Lemma Forall2_mymap_left :
+  forall (A B C : Type) (R : B -> C -> Prop) (f : A -> B) xs ys, Forall2 R (mymap f xs) ys <-> Forall2 (fun x y => R (f x) y) xs ys.
+Proof.
+  intros A B C R f xs ys. split.
+  - intros H. remember (mymap f xs) as zs; generalize xs Heqzs; clear xs Heqzs. induction H.
+    + intros xs; destruct xs; simpl in *; intros; [constructor|congruence].
+    + intros xs; destruct xs; simpl in *; [congruence|].
+      intros; constructor; [|apply IHForall2]; congruence.
+  - intros H; induction H; simpl in *; econstructor; auto.
+Qed.
+
+Lemma Forall2_mymap_right :
+  forall (A B C : Type) (R : A -> C -> Prop) (f : B -> C) xs ys, Forall2 R xs (mymap f ys) <-> Forall2 (fun x y => R x (f y)) xs ys.
+Proof.
+  intros A B C R f xs ys.
+  rewrite Forall2_sym_iff, Forall2_mymap_left, Forall2_sym_iff.
+  reflexivity.
+Qed.
+
+Lemma Forall2_R_refl :
+  forall (A : Type) (R : A -> A -> Prop) xs, (forall x, R x x) -> Forall2 R xs xs.
+Proof.
+  intros A R; induction xs.
+  - intros; constructor.
+  - intros; constructor; auto.
+Qed.
+
+Lemma sequence_mayReturn :
+  forall (A : Type) (xs : list (imp A)) (ys : list A),
+    mayReturn (sequence xs) ys -> Forall2 mayReturn xs ys.
+Proof.
+  intros A. induction xs.
+  - intros ys Hys; simpl in *. apply mayReturn_pure in Hys; rewrite <- Hys.
+    constructor.
+  - intros ys Hys; simpl in *.
+    bind_imp_destruct Hys y Hy.
+    bind_imp_destruct Hys ys1 Hys1.
+    apply mayReturn_pure in Hys; rewrite <- Hys in *.
+    constructor; auto.
+Qed.
+
+Lemma mapM_mayReturn :
+  forall (A B : Type) (f : A -> imp B) (xs : list A) (ys : list B),
+    mayReturn (mapM f xs) ys -> Forall2 (fun x y => mayReturn (f x) y) xs ys.
+Proof.
+  intros A B f xs ys H.
+  apply sequence_mayReturn in H. rewrite Forall2_mymap_left in H.
+  exact H.
+Qed.
+
+Lemma Forall2_length :
+  forall (A B : Type) (R : A -> B -> Prop) (xs : list A) (ys : list B), Forall2 R xs ys -> length xs = length ys.
+Proof.
+  intros A B R xs ys H. induction H; simpl; auto.
+Qed.
+
+Lemma sequence_length :
+  forall (A : Type) (xs : list (imp A)) (ys : list A), mayReturn (sequence xs) ys -> length xs = length ys.
+Proof.
+  intros A xs ys H; apply sequence_mayReturn, Forall2_length in H. auto.
+Qed.
+
+Lemma mymap_length :
+  forall (A B : Type) (f : A -> B) xs, length (mymap f xs) = length xs.
+Proof.
+  induction xs; simpl in *; auto.
+Qed.
+
+Lemma mapM_length :
+  forall (A B : Type) (f : A -> imp B) xs ys, mayReturn (mapM f xs) ys -> length xs = length ys.
+Proof.
+  intros A B f xs ys H; apply sequence_length in H; rewrite mymap_length in H; auto.
+Qed.
+
+(*
+(* sigh *)
+Fixpoint mycombine {A B : Type} (xs : list A) (ys : list B) :=
+  match xs, ys with
+  | x :: xs, y :: ys => (x, y) :: mycombine xs ys
+  | _, _ => nil
+  end.
+
+Lemma mymap_mycombine :
+  forall (A B : Type) (xs : list A) (ys : list B), length xs = length ys -> mymap fst (mycombine xs ys) = xs.
+Proof.
+  intros A B. induction xs.
+  - intros ys H; destruct ys; simpl in *; congruence.
+  - intros ys H; destruct ys; simpl in *; [|rewrite IHxs]; congruence.
+Qed.
+
+Lemma iter_semantics_mycombine :
+  forall (A B : Type) P (xs : list A) (ys : list B) mem1 mem2,
+    length xs = length ys -> iter_semantics P xs mem1 mem2 <-> iter_semantics (fun p => P (fst p)) (mycombine xs ys) mem1 mem2.
+Proof.
+  intros A B P xs ys mem1 mem2 H.
+  replace xs with (mymap fst (mycombine xs ys)) at 1 by (apply mymap_mycombine; auto).
+  rewrite iter_semantics_mymapl; reflexivity.
+Qed.
+
+Lemma iter_semantics_sequence_rev :
+  forall (A : Type) P (xs : list (imp A)) (ys : list A) mem1 mem2,
+    mayReturn (sequence xs) ys ->
+    iter_semantics P ys mem1 mem2 ->
+    iter_semantics (fun '(x, y) mem3 mem4 => mayReturn x y /\ P y mem3 mem4) (mycombine xs ys) mem1 mem2.
+Proof.
+  intros A P. induction xs.
+  - intros ys mem1 mem2 Hys Hsem; simpl in *. apply mayReturn_pure in Hys; rewrite <- Hys in Hsem.
+    inversion_clear Hsem; constructor.
+  - intros ys mem1 mem2 Hys Hsem; simpl in *.
+    bind_imp_destruct Hys y Hy.
+    bind_imp_destruct Hys ys1 Hys1.
+    apply mayReturn_pure in Hys; rewrite <- Hys in *.
+    inversion_clear Hsem.
+    econstructor; [eauto|].
+    apply IHxs; auto.
+Qed.
+*)
+
+Lemma mapM_in_iff :
+  forall (A B : Type) (f : A -> imp B) (xs : list A) (y : B),
+    WHEN ys <- mapM f xs THEN In y ys -> exists x, mayReturn (f x) y /\ In x xs.
+Proof.
+  intros A B f. unfold mapM. induction xs.
+  - intros y ys Hys Hin. simpl in *. apply mayReturn_pure in Hys.
+    rewrite <- Hys in Hin. simpl in *; tauto.
+  - intros y ys Hys Hin. simpl in *.
+    bind_imp_destruct Hys y1 Hy1; bind_imp_destruct Hys ys1 Hys1.
+    apply mayReturn_pure in Hys; rewrite <- Hys in Hin.
+    simpl in *.
+    destruct Hin as [Hin | Hin].
+    + exists a; intuition congruence.
+    + specialize (IHxs y ys1 Hys1 Hin). firstorder.
+Qed.
+
+Lemma mapM_nth_error1 :
+  forall (A B : Type) (f : A -> imp B) (k : nat) (xs : list A) (y : B),
+    WHEN ys <- mapM f xs THEN nth_error ys k = Some y -> exists x, mayReturn (f x) y /\ nth_error xs k = Some x.
+Proof.
+  intros A B f k. unfold mapM. induction k.
+  - intros xs y [|y1 ys] Hys Hnth; simpl in *; [congruence|].
+    destruct xs as [|x xs]; simpl in *; [apply mayReturn_pure in Hys; congruence|].
+    bind_imp_destruct Hys y2 Hy2; bind_imp_destruct Hys ys2 Hys2.
+    apply mayReturn_pure in Hys.
+    exists x; split; congruence.
+  - intros xs y [|y1 ys] Hys Hnth; simpl in *; [congruence|].
+    destruct xs as [|x xs]; simpl in *; [apply mayReturn_pure in Hys; congruence|].
+    bind_imp_destruct Hys y2 Hy2; bind_imp_destruct Hys ys2 Hys2.
+    apply mayReturn_pure in Hys.
+    replace ys2 with ys in * by congruence.
+    apply (IHk _ _ _ Hys2 Hnth).
+Qed.
+
+Lemma mapM_nth_error2 :
+  forall (A B : Type) (f : A -> imp B) (k : nat) (xs : list A) (x : A),
+    nth_error xs k = Some x -> WHEN ys <- mapM f xs THEN exists y, mayReturn (f x) y /\ nth_error ys k = Some y.
+Proof.
+  intros A B f k. unfold mapM. induction k.
+  - intros [|x xs] x1 Hnth ys Hys; simpl in *; [congruence|].
+    bind_imp_destruct Hys y1 Hy1; bind_imp_destruct Hys ys1 Hys1.
+    apply mayReturn_pure in Hys; rewrite <- Hys in *.
+    exists y1; split; congruence.
+  - intros [|x xs] x1 Hnth ys Hys; simpl in *; [congruence|].
+    bind_imp_destruct Hys y1 Hy1; bind_imp_destruct Hys ys1 Hys1.
+    apply mayReturn_pure in Hys; rewrite <- Hys in *.
+    apply (IHk _ _ Hnth _ Hys1).
+Qed.
+
+Lemma iter_semantics_mapl :
+  forall (A B : Type) P (f : A -> B) (l : list A) mem1 mem2,
+    iter_semantics P (map f l) mem1 mem2 <-> iter_semantics (fun x => P (f x)) l mem1 mem2.
+Proof.
+  intros A B P f. induction l.
+  - intros; split; simpl; intros H; inversion_clear H; constructor.
+  - intros; split; simpl; intros H; inversion_clear H; econstructor; eauto; rewrite IHl in *; auto.
+Qed.
+
+(* Unfortunate needed copy (Coq bug workaround) *)
+Lemma iter_semantics_mymapl :
+  forall (A B : Type) P (f : A -> B) (l : list A) mem1 mem2,
+    iter_semantics P (mymap f l) mem1 mem2 <-> iter_semantics (fun x => P (f x)) l mem1 mem2.
+Proof.
+  intros A B P f. induction l.
+  - intros; split; simpl; intros H; inversion_clear H; constructor.
+  - intros; split; simpl; intros H; inversion_clear H; econstructor; eauto; rewrite IHl in *; auto.
+Qed.
+
+Lemma map_combine :
+  forall (A B : Type) (xs : list A) (ys : list B),
+    length xs = length ys -> map fst (combine xs ys) = xs.
+Proof.
+  intros A B. induction xs.
+  - intros [|y ys] H; simpl in *; auto.
+  - intros [|y ys] H; simpl in *; [|rewrite IHxs]; congruence.
+Qed.
+
+Lemma iter_semantics_combine :
+  forall (A B : Type) P (xs : list A) (ys : list B) mem1 mem2,
+    length xs = length ys -> iter_semantics P xs mem1 mem2 <-> iter_semantics (fun p => P (fst p)) (combine xs ys) mem1 mem2.
+Proof.
+  intros A B P xs ys mem1 mem2 H.
+  replace xs with (map fst (combine xs ys)) at 1 by (apply map_combine; auto).
+  rewrite iter_semantics_mapl; reflexivity.
+Qed.
+
+Lemma iter_semantics_sequence :
+  forall (A : Type) P (xs : list (imp A)) (ys : list A) mem1 mem2,
+    mayReturn (sequence xs) ys ->
+    iter_semantics (fun x mem3 mem4 => WHEN y <- x THEN P y mem3 mem4) xs mem1 mem2 -> iter_semantics P ys mem1 mem2.
+Proof.
+  intros A P. induction xs.
+  - intros ys mem1 mem2 Hys Hsem; simpl in *. apply mayReturn_pure in Hys; rewrite <- Hys.
+    inversion_clear Hsem; constructor.
+  - intros ys mem1 mem2 Hys Hsem; simpl in *.
+    bind_imp_destruct Hys y Hy.
+    bind_imp_destruct Hys ys1 Hys1.
+    apply mayReturn_pure in Hys; rewrite <- Hys in *.
+    inversion_clear Hsem. 
+    econstructor; [apply H; auto|].
+    apply IHxs; auto.
+Qed.
+
+Lemma iter_semantics_mapM :
+  forall (A B : Type) f P (xs : list A) (ys : list B) mem1 mem2,
+    mayReturn (mapM f xs) ys ->
+    iter_semantics (fun x mem3 mem4 => WHEN y <- f x THEN P y mem3 mem4) xs mem1 mem2 -> iter_semantics P ys mem1 mem2.
+Proof.
+  intros A B f P xs ys mem1 mem2 Hmap Hsem.
+  eapply iter_semantics_sequence; [exact Hmap|].
+  rewrite iter_semantics_mymapl. auto.
+Qed.
+
+Lemma iter_semantics_mapM_rev :
+  forall (A B : Type) P f (xs : list A) (ys : list B) mem1 mem2,
+    mayReturn (mapM f xs) ys ->
+    iter_semantics P ys mem1 mem2 ->
+    iter_semantics (fun '(x, y) mem3 mem4 => mayReturn (f x) y /\ P y mem3 mem4) (combine xs ys) mem1 mem2.
+Proof.
+  intros A B P f. induction xs.
+  - intros ys mem1 mem2 Hys Hsem; simpl in *. apply mayReturn_pure in Hys; rewrite <- Hys in Hsem.
+    inversion_clear Hsem; constructor.
+  - intros ys mem1 mem2 Hys Hsem; simpl in *.
+    bind_imp_destruct Hys y Hy.
+    bind_imp_destruct Hys ys1 Hys1.
+    apply mayReturn_pure in Hys; rewrite <- Hys in *.
+    inversion_clear Hsem.
+    econstructor; [eauto|].
+    apply IHxs; auto.
+Qed.
+
+(*
+Fixpoint search {A : Type} (P : A -> bool) (l : list A) :=
+  match l with
+  | nil => None
+  | x :: l => if P x then Some 0%nat else option_map S (search P l)
+  end.
+*)
+
+
+
 Definition update_poly pi pol :=
   {| pi_instr := pi.(pi_instr) ; pi_poly := pol ; pi_schedule := pi.(pi_schedule) ; pi_transformation := pi.(pi_transformation) |}.
 
-Axiom dummy_pi : Polyhedral_Instruction.
+Definition poly_inter_pure (p1 p2 : polyhedron) : polyhedron := p1 ++ p2.
+Lemma poly_inter_pure_def :
+  forall p pol1 pol2, in_poly p (poly_inter_pure pol1 pol2) = in_poly p pol1 && in_poly p pol2.
+Proof.
+  intros p pol1 pol2; unfold poly_inter_pure, in_poly.
+  rewrite forallb_app; reflexivity.
+Qed.
 
-Axiom poly_inter : polyhedron -> polyhedron -> imp polyhedron.
-Axiom split_and_sort : list polyhedron -> imp (list (polyhedron * list nat)).
+Definition poly_inter p1 p2 :=
+  Canon.canonize (poly_inter_pure p1 p2).
+Lemma poly_inter_def :
+  forall p pol1 pol2, WHEN pol <- poly_inter pol1 pol2 THEN in_poly p pol = in_poly p (poly_inter_pure pol1 pol2).
+Proof.
+  intros p pol1 pol2 pol Hinter.
+  apply Canon.canonize_correct in Hinter.
+  specialize (Hinter 1 p). rewrite !expand_poly_1 in Hinter.
+  apply Hinter; lia.
+Qed.
+
+Definition absent_var (p : polyhedron) k :=
+  forall c, In c p -> nth k (fst c) 0 = 0.
+
+Lemma has_var_poly_nrl :
+  forall n p, (poly_nrl p <= n)%nat <-> (forall k, (n <= k)%nat -> absent_var p k).
+Proof.
+  intros n p.
+  rewrite <- poly_nrl_def. split.
+  - intros H k Hnk c Hc.
+    specialize (H c Hc).
+    erewrite nth_eq; [|exact H].
+    rewrite nth_overflow; [reflexivity|].
+    rewrite resize_length; auto.
+  - intros H c Hc.
+    apply vector_nth_eq; intros k.
+    rewrite nth_resize.
+    destruct (k <? n)%nat eqn:Hnk; reflect; [reflexivity|].
+    rewrite H; auto.
+Qed.
+
+Lemma poly_inter_pure_no_new_var :
+  forall pol1 pol2 k, absent_var pol1 k -> absent_var pol2 k -> absent_var (poly_inter_pure pol1 pol2) k.
+Proof.
+  intros pol1 pol2 k H1 H2 c Hc.
+  rewrite in_app_iff in Hc; destruct Hc; auto.
+Qed.
+
+Lemma poly_inter_no_new_var :
+  forall pol1 pol2 k, absent_var pol1 k -> absent_var pol2 k ->
+                 WHEN pol <- poly_inter pol1 pol2 THEN absent_var pol k.
+Proof.
+  intros pol1 pol2 k H1 H2 pol Hpol.
+  apply Canon.canonize_no_new_var with (k := k) in Hpol; [auto|].
+  apply poly_inter_pure_no_new_var; auto.
+Qed.
+
+Lemma poly_inter_nrl :
+  forall pol1 pol2 n, (poly_nrl pol1 <= n)%nat -> (poly_nrl pol2 <= n)%nat ->
+                 WHEN pol <- poly_inter pol1 pol2 THEN (poly_nrl pol <= n)%nat.
+Proof.
+  intros pol1 pol2 n H1 H2 pol Hpol.
+  rewrite has_var_poly_nrl in *.
+  intros k Hnk; eapply poly_inter_no_new_var; [| |exact Hpol]; eauto.
+Qed.
+
+Definition dummy_pi := {|
+  pi_instr := dummy_instr ;
+  pi_poly := nil ;
+  pi_transformation := nil ;
+  pi_schedule := nil
+|}.
+
+Axiom split_and_sort : nat -> list polyhedron -> imp (list (polyhedron * list nat)).
+Axiom split_and_sort_index_NoDup :
+  forall n pols, WHEN out <- split_and_sort n pols THEN forall polpl, In polpl out -> NoDup (snd polpl).
+Axiom split_and_sort_index_correct :
+  forall n pols, WHEN out <- split_and_sort n pols THEN forall polpl i, In polpl out -> In i (snd polpl) -> (i < length pols)%nat.
+Axiom split_and_sort_disjoint :
+  forall n pols, WHEN out <- split_and_sort n pols THEN
+          forall p k1 k2 ppl1 ppl2, nth_error out k1 = Some ppl1 -> nth_error out k2 = Some ppl2 ->
+                               in_poly p (fst ppl1) = true -> in_poly p (fst ppl2) = true -> k1 = k2.
+Axiom split_and_sort_sorted :
+  forall n pols, WHEN out <- split_and_sort n pols THEN
+            forall k1 k2 ppl1 ppl2, nth_error out k1 = Some ppl1 -> nth_error out k2 = Some ppl2 ->
+                               (k1 < k2)%nat -> canPrecede n (fst ppl1) (fst ppl2).
+Axiom split_and_sort_cover :
+  forall n pols, WHEN out <- split_and_sort n pols THEN
+            forall p pol i, nth_error pols i = Some pol -> in_poly p pol = true -> exists ppl, In ppl out /\ In i (snd ppl) /\ in_poly p (fst ppl) = true.
+
+Definition make_npis pis pol pl :=
+  map (fun t => let pi := nth t pis dummy_pi in
+             let npol := poly_inter_pure pi.(pi_poly) pol in
+             update_poly pi npol) pl.
+
+Definition make_npis_simplify pis pol pl :=
+  mapM (fun t => let pi := nth t pis dummy_pi in
+              BIND npol <- poly_inter pi.(pi_poly) pol -;
+              pure (update_poly pi npol)) pl.
+
+Definition pi_equiv pi1 pi2 :=
+  (forall p, in_poly p pi1.(pi_poly) = in_poly p pi2.(pi_poly)) /\
+  pi1.(pi_instr) = pi2.(pi_instr) /\
+  pi1.(pi_transformation) = pi2.(pi_transformation).
+
+Lemma make_npis_simplify_equiv :
+  forall pis pol pl,
+    WHEN npis <- make_npis_simplify pis pol pl THEN
+         Forall2 pi_equiv (make_npis pis pol pl) npis.
+Proof.
+  intros pis pol pl npis Hnpis.
+  apply mapM_mayReturn in Hnpis.
+  unfold make_npis. rewrite Forall2_map_left.
+  eapply Forall2_imp; [|exact Hnpis].
+  intros t pi Hpi. simpl in *.
+  bind_imp_destruct Hpi npol Hnpol; apply mayReturn_pure in Hpi.
+  rewrite <- Hpi in *.
+  unfold pi_equiv, update_poly; simpl.
+  split; [|tauto].
+  intros p. symmetry. apply poly_inter_def. auto.
+Qed.
 
 Fixpoint generate_loop_many (d : nat) (n : nat) (pis : list Polyhedral_Instruction) : imp poly_stmt :=
   match d with
   | O => pure (make_seq (map (fun pi => PInstr pi.(pi_instr) (map (fun t => (1%positive, t)) pi.(pi_transformation))) pis))
   | S d1 =>
     BIND projs <- mapM (fun pi => project ((n - d1)%nat, pi.(pi_poly))) pis -;
-    BIND projsep <- split_and_sort projs -;
+    BIND projsep <- split_and_sort (n - d)%nat projs -;
     BIND inner <- mapM (fun '(pol, pl) =>
-         BIND npis <- mapM (fun t => let pi := nth t pis dummy_pi in
-                                 BIND npol <- poly_inter pi.(pi_poly) pol -; pure (update_poly pi npol)) pl -;
+         BIND npis <- make_npis_simplify pis pol pl -;
          BIND inside <- generate_loop_many d1 n npis -;
          pure (PLoop pol inside)) projsep -;
     pure (make_seq inner)
@@ -1937,10 +2394,312 @@ Fixpoint generate_loop_many (d : nat) (n : nat) (pis : list Polyhedral_Instructi
 Definition pis_have_dimension pis n :=
   forallb (fun pi => (poly_nrl (pi.(pi_poly)) <=? n)%nat) pis = true.
 
+Lemma make_npis_simplify_have_dimension :
+  forall pis pol pl n,
+    pis_have_dimension pis n ->
+    (poly_nrl pol <= n)%nat ->
+    WHEN npis <- make_npis_simplify pis pol pl THEN
+         pis_have_dimension npis n.
+Proof.
+  intros pis pol pl n Hpis Hpol npis Hnpis.
+  unfold pis_have_dimension in *; rewrite forallb_forall in *.
+  intros npi Hnpi. eapply mapM_in_iff in Hnpi; [|exact Hnpis].
+  destruct Hnpi as [t [Hnpi Htin]].
+  bind_imp_destruct Hnpi npol Hnpol. apply mayReturn_pure in Hnpi.
+  reflect.
+  rewrite <- Hnpi; simpl.
+  eapply poly_inter_nrl; [|exact Hpol|exact Hnpol].
+  destruct (t <? length pis)%nat eqn:Ht; reflect.
+  - specialize (Hpis (nth t pis dummy_pi)). reflect; apply Hpis.
+    apply nth_In; auto.
+  - rewrite nth_overflow by auto.
+    simpl. unfold poly_nrl; simpl. lia.
+Qed.
+
 Definition generate_invariant n pis env :=
   forall pi, In pi pis -> project_invariant n pi.(pi_poly) (rev env).
 
-(*
+Lemma project_inclusion2 :
+  forall (n : nat) (p : list Z) (pol : list (list Z * Z)),
+    in_poly p pol = true -> WHEN proj <- project (n, pol) THEN in_poly p proj = true.
+Proof.
+  intros n p pol Hin proj Hproj.
+  generalize (project_inclusion n p pol Hin proj Hproj); intros H.
+  unfold in_poly in *; rewrite forallb_forall in *. intros c Hc; specialize (H c Hc).
+  apply project_constraint_size with (c := c) in Hproj. specialize (Hproj Hc).
+  rewrite <- H; unfold satisfies_constraint; f_equal.
+  rewrite Hproj, <- dot_product_resize_left, resize_length.
+  reflexivity.
+Qed.
+
+(* Useful to weaken an hypothesis in next proof *)
+Lemma refl_scan :
+  forall (scan1 scan2 : nat -> list Z -> bool), scan1 = scan2 -> (forall n p, scan1 n p = scan2 n p).
+Proof.
+  intros scan1 scan2 ->. reflexivity.
+Qed.
+
+Lemma poly_lex_semantics_subpis :
+  forall pis pl to_scan mem1 mem2,
+    (forall n p, to_scan n p = true -> In n pl) ->
+    NoDup pl ->
+    (forall n, In n pl -> (n < length pis)%nat) ->
+    poly_lex_semantics to_scan pis mem1 mem2 <->
+    poly_lex_semantics (fun n p => match nth_error pl n with Some m => to_scan m p | None => false end) (map (fun t => nth t pis dummy_pi) pl) mem1 mem2.
+Proof.
+  intros pis pl to_scan mem1 mem2 Hscan Hdup Hpl.
+  split.
+  - intros H; induction H as [to_scan prog mem Hdone|to_scan prog mem1 mem2 mem3 pi n p Hscanp Heqpi Hts Hsem1 Hsem2 IH].
+    + apply PolyLexDone. intros n p; destruct (nth_error pl n); auto.
+    + generalize (Hscan _ _ Hscanp); intros Hnpl. apply In_nth_error in Hnpl; destruct Hnpl as [k Hk].
+      eapply PolyLexProgress; [| | |exact Hsem1|eapply poly_lex_semantics_extensionality; [apply IH|]].
+      * rewrite Hk; auto.
+      * erewrite map_nth_error; [|exact Hk]. f_equal.
+        apply nth_error_nth; auto.
+      * intros n2 p2 H; destruct (nth_error pl n2); auto.
+      * intros n2 p2 H; eapply Hscan.
+        unfold scanned in H; reflect; destruct H; eauto.
+      * auto.
+      * intros k2 p2. unfold scanned. simpl.
+        destruct (nth_error pl k2) as [n2|] eqn:Hk2; simpl; [|reflexivity].
+        f_equal. f_equal. f_equal.
+        apply eq_iff_eq_true; reflect.
+        split; [|congruence]. intros Hn. rewrite NoDup_nth_error in Hdup. apply Hdup; [|congruence].
+        rewrite <- nth_error_Some. congruence.
+  - match goal with [ |- poly_lex_semantics ?x ?y _ _ -> _] => remember x as to_scan1; remember y as pis1 end.
+    generalize (refl_scan _ _ Heqto_scan1); clear Heqto_scan1; intros Heqto_scan1.
+    intros H; generalize to_scan1 pis1 H to_scan Hscan Heqto_scan1 Heqpis1. clear Heqto_scan1 Heqpis1 Hscan to_scan H pis1 to_scan1.
+    intros to_scan1 pis1 H.
+    induction H as [to_scan1 prog mem Hdone|to_scan1 prog mem1 mem2 mem3 pi n p Hscanp Heqpi Hts Hsem1 Hsem2 IH].
+    + intros; apply PolyLexDone.
+      intros n p.
+      apply not_true_is_false. intros Hscan2.
+      destruct (In_nth_error _ _ (Hscan _ _ Hscan2)) as [k Hk].
+      specialize (Heqto_scan1 k p). rewrite Hdone, Hk in Heqto_scan1. congruence.
+    + intros to_scan Hscan Hscan1 Hprog; rewrite Hprog in *; rewrite Hscan1 in *.
+      destruct (nth_error pl n) as [k|] eqn:Hk; [|congruence].
+      eapply PolyLexProgress; [exact Hscanp| | |exact Hsem1|eapply poly_lex_semantics_extensionality; [apply (IH (scanned to_scan k p))|]].
+      * erewrite map_nth_error in Heqpi; [|exact Hk].
+        rewrite nth_error_nth_iff with (d := dummy_pi); [congruence|eauto].
+      * intros n2 p2 Hts2. apply not_true_is_false. intros Hscan2.
+        destruct (In_nth_error _ _ (Hscan _ _ Hscan2)) as [k2 Hk2].
+        specialize (Hts k2 p2 Hts2); rewrite Hscan1, Hk2 in Hts. congruence.
+      * intros n2 p2 H. unfold scanned in H. reflect. destruct H; eapply Hscan; eauto.
+      * intros n2 p2. unfold scanned. simpl. rewrite Hscan1.
+        destruct (nth_error pl n2) as [k2|] eqn:Hk2; simpl; [|reflexivity].
+        f_equal. f_equal. f_equal.
+        apply eq_iff_eq_true; reflect.
+        split; [congruence|]. intros Hn. rewrite NoDup_nth_error in Hdup. apply Hdup; [|congruence].
+        rewrite <- nth_error_Some. congruence.
+      * reflexivity.
+      * reflexivity.
+Qed. 
+
+Lemma poly_lex_semantics_pis_ext_single :
+  forall pis1 pis2 to_scan mem1 mem2,
+    Forall2 (fun pi1 pi2 => pi1.(pi_instr) = pi2.(pi_instr) /\ pi1.(pi_transformation) = pi2.(pi_transformation)) pis1 pis2 ->
+    poly_lex_semantics to_scan pis1 mem1 mem2 -> poly_lex_semantics to_scan pis2 mem1 mem2.
+Proof.
+  intros pis1 pis2 to_scan mem1 mem2 Hsame Hsem.
+  induction Hsem as [to_scan1 prog mem Hdone|to_scan1 prog mem1 mem2 mem3 pi n p Hscanp Heqpi Hts Hsem1 Hsem2 IH].
+  - apply PolyLexDone; auto.
+  - destruct (Forall2_nth_error _ _ _ _ _ _ _ Hsame Heqpi) as [pi2 [Hpi2 [H1 H2]]].
+    eapply PolyLexProgress; [exact Hscanp|exact Hpi2|exact Hts| |apply IH; auto].
+    rewrite H1, H2 in *; auto.
+Qed.
+
+Lemma poly_lex_semantics_pis_ext_iff :
+  forall pis1 pis2 to_scan mem1 mem2,
+    Forall2 (fun pi1 pi2 => pi1.(pi_instr) = pi2.(pi_instr) /\ pi1.(pi_transformation) = pi2.(pi_transformation)) pis1 pis2 ->
+    poly_lex_semantics to_scan pis1 mem1 mem2 <-> poly_lex_semantics to_scan pis2 mem1 mem2.
+Proof.
+  intros pis1 pis2 to_scan mem1 mem2 Hsame.
+  split.
+  - apply poly_lex_semantics_pis_ext_single; auto.
+  - apply poly_lex_semantics_pis_ext_single.
+    eapply Forall2_imp; [|apply Forall2_sym; exact Hsame].
+    intros x y H; simpl in *; destruct H; auto.
+Qed.
+
+Lemma poly_lex_semantics_ext_iff :
+  forall pis to_scan1 to_scan2 mem1 mem2,
+    (forall n p, to_scan1 n p = to_scan2 n p) ->
+    poly_lex_semantics to_scan1 pis mem1 mem2 <-> poly_lex_semantics to_scan2 pis mem1 mem2.
+Proof.
+  intros pis to_scan1 to_scan2 mem1 mem2 Hsame.
+  split; intros H.
+  - eapply poly_lex_semantics_extensionality; [exact H|]. auto.
+  - eapply poly_lex_semantics_extensionality; [exact H|]. auto.
+Qed.
+
+Lemma env_scan_pi_equiv :
+  forall env pis1 pis2 d n p,
+    Forall2 pi_equiv pis1 pis2 ->
+    env_scan pis1 env d n p = env_scan pis2 env d n p.
+Proof.
+  intros env pis1 pis2 d n p H.
+  unfold env_scan. destruct (nth_error pis1 n) as [pi1|] eqn:Hpi1.
+  - destruct (Forall2_nth_error _ _ _ _ _ _ _ H Hpi1) as [pi2 [-> Hpis]].
+    f_equal. unfold pi_equiv in Hpis. destruct Hpis; auto.
+  - erewrite nth_error_None, Forall2_length, <- nth_error_None in Hpi1 by (exact H).
+    rewrite Hpi1; reflexivity.
+Qed.
+
+Lemma env_poly_lex_semantics_ext_pi_equiv :
+  forall env n pis1 pis2 mem1 mem2,
+    Forall2 pi_equiv pis1 pis2 ->
+    env_poly_lex_semantics env n pis1 mem1 mem2 <-> env_poly_lex_semantics env n pis2 mem1 mem2.
+Proof.
+  intros env n pis1 pis2 mem1 mem2 H.
+  unfold env_poly_lex_semantics.
+  rewrite poly_lex_semantics_pis_ext_iff; [rewrite poly_lex_semantics_ext_iff; [reflexivity|]|].
+  - intros m p. apply env_scan_pi_equiv. auto.
+  - eapply Forall2_imp; [|exact H]. intros; unfold pi_equiv in *; tauto.
+Qed.
+
+Definition subscan pis pol pl env d n p :=
+  existsb (fun m => (m =? n)%nat) pl && in_poly p pol && env_scan pis env d n p.
+
+Lemma subscan_in :
+  forall pis pol pl env d n p,
+    subscan pis pol pl env d n p = true -> in_poly p pol = true.
+Proof.
+  intros pis pol pl env d n p Hsub.
+  unfold subscan in Hsub.
+  reflect; tauto.
+Qed.
+
+Lemma resize_1 :
+  forall v, resize 1 v = nth 0 v 0 :: nil.
+Proof.
+  intros v; destruct v; auto.
+Qed.
+
+Lemma subscan_in_env :
+  forall pis pol pl env d n p,
+    (poly_nrl pol <= S (length env))%nat ->
+    subscan pis pol pl env d n p = true ->
+    in_poly (env ++ (nth (length env) p 0) :: nil) pol = true.
+Proof.
+  intros pos pol pl env d n p Hnrl Hsub.
+  unfold subscan in Hsub. reflect. destruct Hsub as [[_ Hpin] Hscan].
+  apply env_scan_begin in Hscan. rewrite Hscan in Hpin.
+  erewrite <- in_poly_nrlength by (exact Hnrl).
+  erewrite <- in_poly_nrlength in Hpin by (exact Hnrl).
+  rewrite resize_app_le in * by lia.
+  replace (S (length env) - length env)%nat with 1%nat in * by lia.
+  rewrite resize_1 in *. simpl.
+  rewrite nth_skipn, Nat.add_0_r in Hpin. auto.
+Qed.
+
+Instance subscan_proper pis pol pl env d : Proper (eq ==> veq ==> eq) (subscan pis pol pl env d).
+Proof.
+  intros n1 n2 Hn p1 p2 Hp. unfold subscan.
+  rewrite Hn, Hp. reflexivity.
+Qed.
+
+Lemma poly_lex_semantics_make_npis_subscan :
+  forall pis pol pl n env mem1 mem2,
+    NoDup pl ->
+    (forall n, In n pl -> (n < length pis)%nat) ->
+    poly_lex_semantics (subscan pis pol pl (rev env) n) pis mem1 mem2 <->
+    env_poly_lex_semantics (rev env) n (make_npis pis pol pl) mem1 mem2.
+Proof.
+  intros pis pol pl n env mem1 mem2 Hdup Hind.
+  unfold env_poly_lex_semantics, make_npis. 
+  rewrite poly_lex_semantics_subpis with (pl := pl).
+  - erewrite poly_lex_semantics_pis_ext_iff; [apply poly_lex_semantics_ext_iff|].
+    + intros m p. destruct (nth_error pl m) as [k|] eqn:Hk.
+      * assert (Hkin : In k pl) by (eapply nth_error_In; eauto).
+        unfold subscan, env_scan. erewrite map_nth_error; [|exact Hk]. simpl.
+        rewrite poly_inter_pure_def.
+        destruct (nth_error pis k) as [pi|] eqn:Hpik; [|rewrite nth_error_None in Hpik; specialize (Hind _ Hkin); lia].
+        erewrite nth_error_nth; [|exact Hpik].
+        replace (existsb (fun k1 => (k1 =? k)%nat) pl) with true by (symmetry; rewrite existsb_exists; exists k; reflect; auto).
+        ring.
+      * rewrite nth_error_None in Hk. unfold env_scan.
+        erewrite <- map_length, <- nth_error_None in Hk; rewrite Hk.
+        reflexivity.
+    + rewrite Forall2_map_left, Forall2_map_right. apply Forall2_R_refl.
+      intros x; simpl; auto.
+  - intros m p Hscan. unfold subscan in Hscan.
+    destruct (existsb (fun m1 => (m1 =? m)%nat) pl) eqn:Hex; simpl in *; [|congruence].
+    rewrite existsb_exists in Hex; destruct Hex as [m1 [Hm1 Hmeq]]. reflect.
+    rewrite <- Hmeq; auto.
+  - auto.
+  - auto.
+Qed.
+
+Lemma env_scan_extend_many :
+  forall d n pis lb ub env m p,
+    length env = n ->
+    (n < d)%nat ->
+    (forall x, env_scan pis (rev env ++ x :: nil) d m p = true -> lb <= x < ub) ->
+    env_scan pis (rev env) d m p =
+      existsb (fun x : Z => env_scan pis (rev env ++ x :: nil) d m p) (Zrange lb ub).
+Proof.
+  intros d n pis lb ub env m p Hlen Hnd Hlbub.
+  rewrite eq_iff_eq_true. rewrite existsb_exists.
+  rewrite env_scan_split by (rewrite rev_length; lia).
+  split.
+  - intros [x Hscan]; exists x; split; [|auto].
+    rewrite Zrange_in. auto.
+  - intros [x [H1 H2]]; exists x; assumption.
+Qed.
+
+Lemma env_scan_make_npis_in :
+  forall pis pol pl env n m p,
+    env_scan (make_npis pis pol pl) env n m p = true -> in_poly p pol = true.
+Proof.
+  intros pis pol pl env n m p H.
+  unfold make_npis, env_scan in H.
+  destruct nth_error as [pi|] eqn:Hpi; [|congruence].
+  rewrite nth_error_map_iff in Hpi. destruct Hpi as [t [Ht Hpi]].
+  rewrite Hpi in H; simpl in H.
+  rewrite poly_inter_pure_def in H. reflect; tauto.
+Qed.
+
+Lemma lex_compare_lt_head :
+  forall v1 v2, lex_compare v1 v2 = Lt -> nth 0 v1 0 <= nth 0 v2 0.
+Proof.
+  intros v1 v2 H.
+  rewrite <- resize_skipn_eq with (d := 1%nat) (l := v1) in H.
+  rewrite <- resize_skipn_eq with (d := 1%nat) (l := v2) in H.
+  rewrite !resize_1 in H.
+  simpl in H. destruct (nth 0 v1 0 ?= nth 0 v2 0) eqn:Hcmp; congruence.
+Qed.
+
+Lemma combine_map_r :
+  forall (A B C : Type) (f : B -> C) (xs : list A) (ys : list B),
+    combine xs (map f ys) = map (fun u => (fst u, f (snd u))) (combine xs ys).
+Proof.
+  intros A B C f. induction xs.
+  - intros [|y ys]; simpl; auto.
+  - intros [|y ys]; simpl; auto.
+Qed.
+
+Lemma combine_n_range_in :
+  forall (A : Type) (k : nat) (l : list A) (x : A),
+    In (x, k) (combine l (n_range (length l))) <-> nth_error l k = Some x.
+Proof.
+  intros A. induction k.
+  - intros [|y l] x.
+    + simpl. split; intros; [tauto | congruence].
+    + replace (length (y :: l)) with (S (length l)) by reflexivity.
+      rewrite n_range_begin. simpl.
+      split; [|intros; left; congruence].
+      intros [H | H]; [congruence|]. exfalso.
+      apply in_combine_r in H. rewrite in_map_iff in H. destruct H as [? [? _]]; congruence.
+  - intros [|y l] x.
+    + simpl. split; intros; [tauto | congruence].
+    + replace (length (y :: l)) with (S (length l)) by reflexivity.
+      rewrite n_range_begin. simpl.
+      rewrite <- IHk, combine_map_r, in_map_iff. split.
+      * intros [H | [[x1 k1] [Hxk Hin]]]; [congruence|].
+        simpl in *. congruence.
+      * intros H; right; exists (x, k); auto.
+Qed.
+
 Theorem generate_loop_many_preserves_sem :
   forall d n pis env mem1 mem2,
     (d <= n)%nat ->
@@ -1953,40 +2712,154 @@ Theorem generate_loop_many_preserves_sem :
 Proof.
   induction d.
   - intros n pis env mem1 mem2 Hnd st Hgen Hsem Hlen Hpidim Hinv.
-    admit. (*
-    eapply generate_loop_single_point; eauto; try lia.
-    eapply project_id; eauto.
-    rewrite Nat.sub_0_r in Hinv. auto. *)
+    simpl in *. apply mayReturn_pure in Hgen. rewrite <- Hgen in Hsem.
+    apply make_seq_semantics in Hsem.
+    unfold env_poly_lex_semantics.
+    rewrite iter_semantics_mapl in Hsem.
+    rewrite iter_semantics_combine with (ys := n_range (length pis)) in Hsem by (rewrite n_range_length; auto).
+    eapply poly_lex_semantics_extensionality;
+      [eapply poly_lex_concat_seq with (to_scans := fun (arg : Polyhedral_Instruction * nat) m p => (m =? snd arg)%nat && env_scan pis (rev env) n m p)|].
+    + eapply iter_semantics_map; [|exact Hsem].
+      intros [pi x] mem3 mem4 Hinpixs Hloopseq. simpl in *.
+      rewrite combine_n_range_in in Hinpixs.
+      apply PLInstr_inv_sem in Hloopseq.
+      eapply PolyLexProgress with (p := rev env); [|exact Hinpixs| | |apply PolyLexDone].
+      * unfold env_scan. rewrite Hinpixs. reflect. split; [auto|].
+        split; [rewrite !resize_length_eq; [split; reflexivity| |]; rewrite !rev_length; lia|].
+        (* From generate invariant *)
+        apply nth_error_In in Hinpixs.
+        unfold generate_invariant in Hinv. specialize (Hinv pi Hinpixs).
+        eapply project_id; [|exact Hinv].
+        rewrite poly_nrl_def. unfold pis_have_dimension in Hpidim.
+        rewrite forallb_forall in Hpidim. specialize (Hpidim pi Hinpixs). reflect. lia.
+      * intros n2 p2 H. destruct (n2 =? x)%nat eqn:Hn2; reflect; [|auto].
+        right. apply not_true_is_false; intros Hscan.
+        apply env_scan_single in Hscan; [|rewrite rev_length; lia].
+        rewrite Hscan in H. rewrite lex_compare_reflexive in H; congruence.
+      * rewrite map_map in Hloopseq. unfold affine_product.
+        erewrite map_ext; [exact Hloopseq|].
+        intros c; unfold eval_affine_expr; simpl. rewrite Z.div_1_r. reflexivity.
+      * intros m p. unfold scanned.
+        apply not_true_is_false. intros H; reflect.
+        destruct H as [[Hmx Hscan] H].
+        apply env_scan_single in Hscan; [|rewrite rev_length; lia].
+        rewrite Hscan, is_eq_reflexive in H. destruct H; congruence.
+    + intros [i x] m1 m2 -> p1 p2 ->. reflexivity.
+    + intros [i1 x1] k1 [i2 x2] k2 m p H1 H2 Hk1 Hk2.
+      rewrite nth_error_combine in Hk1, Hk2. simpl in *; reflect.
+      rewrite n_range_nth_error in Hk1, Hk2. destruct H1; destruct H2; destruct Hk1 as [? [? ?]]; destruct Hk2 as [? [? ?]]. congruence.
+    + intros [i1 x1] n1 p1 k1 [i2 x2] n2 p2 k2 Hcmp H1 H2 Hk1 Hk2.
+      reflect; simpl in *.
+      rewrite nth_error_combine, n_range_nth_error in Hk1, Hk2.
+      destruct H1 as [Hn1 H1]; destruct H2 as [Hn2 H2].
+      apply env_scan_single in H1; apply env_scan_single in H2; try (rewrite rev_length; lia).
+      rewrite <- H1, <- H2, lex_compare_reflexive in Hcmp. congruence.
+    + intros m p. simpl. rewrite eq_iff_eq_true, existsb_exists.
+      split; [intros [x Hx]; reflect; tauto|]. intros Hscan; rewrite Hscan.
+      unfold env_scan in Hscan. destruct (nth_error pis m) as [pi|] eqn:Hpi; [|congruence].
+      exists (pi, m). rewrite combine_n_range_in.
+      simpl in *; reflect; auto.
   - intros n pis env mem1 mem2 Hnd st Hgen Hsem Hlen Hpidim Hinv. simpl in *.
     bind_imp_destruct Hgen projs Hprojs.
     bind_imp_destruct Hgen projsep Hprojsep.
     bind_imp_destruct Hgen inner Hinner.
+    assert (Hprojnrl : forall ppl, In ppl projsep -> (poly_nrl (fst ppl) <= n - d)%nat) by admit.
     apply mayReturn_pure in Hgen. rewrite <- Hgen in Hsem; clear Hgen.
-    apply PLLoop_inv_sem in Hsem.
-    destruct Hsem as [lb [ub [Hlbub Hsem]]].
-    unfold env_poly_lex_semantics in *.
-    eapply poly_lex_semantics_extensionality.
-    + apply poly_lex_concat_seq with (to_scans := fun x => env_scan (pi :: nil) (rev (x :: env)) n).
+    rewrite make_seq_semantics in Hsem.
+    unfold env_poly_lex_semantics.
+    eapply poly_lex_semantics_extensionality;
+      [apply poly_lex_concat_seq with (to_scans := fun (arg : (polyhedron * list nat * poly_stmt)) => subscan pis (fst (fst arg)) (snd (fst arg)) (rev env) n)|].
+    + eapply iter_semantics_mapM_rev in Hsem; [|exact Hinner].
+      eapply iter_semantics_map; [|apply Hsem]. clear Hsem.
+      intros [[pol pl] inner1] mem3 mem4 Hins [Hinner1 Hseminner1].
+      apply in_combine_l in Hins.
+      bind_imp_destruct Hinner1 npis Hnpis.
+      bind_imp_destruct Hinner1 inside Hinside.
+      apply mayReturn_pure in Hinner1; rewrite <- Hinner1 in *.
+      simpl. rewrite poly_lex_semantics_make_npis_subscan; [|
+        eapply split_and_sort_index_NoDup with (polpl := (pol, pl)); eauto |
+        intros i Hi; erewrite mapM_length; [|exact Hprojs]; eapply split_and_sort_index_correct with (polpl := (pol, pl)); eauto
+      ].
+      erewrite env_poly_lex_semantics_ext_pi_equiv; [|apply make_npis_simplify_equiv; eauto].
+      apply PLLoop_inv_sem in Hseminner1.
+      destruct Hseminner1 as [lb [ub [Hlbub Hsem]]].
+      unfold env_poly_lex_semantics in *.
+      eapply poly_lex_semantics_extensionality.
+      apply poly_lex_concat_seq with (to_scans := fun x => env_scan npis (rev (x :: env)) n).
       * eapply iter_semantics_map; [|apply Hsem].
-        intros x mem3 mem4 Hbounds Hloop. eapply IHd with (env := x :: env); simpl; eauto; try lia.
-        replace (n - d)%nat with (S (n - S d))%nat in * by lia.
-        eapply project_next_r_inclusion; [|exact Hproj|].
-        -- rewrite project_invariant_resize, resize_app by (rewrite rev_length; auto).
-           apply Hinv.
-        -- intros c Hcin Hcnth. rewrite <- Hlbub in Hbounds.
-           unfold in_poly in Hbounds; rewrite forallb_forall in Hbounds. apply Hbounds.
-           rewrite filter_In; reflect; auto.
-      * intros x. apply env_scan_proper.
-      * intros x1 x2 m p. apply env_scan_inj_rev.
-      * intros x1 n1 p1 x2 n2 p2 Hcmp H1 H2.
+        intros x mem5 mem6 Hbounds Hloop. eapply IHd with (env := x :: env); simpl; eauto; try lia.
+        -- eapply make_npis_simplify_have_dimension; eauto.
+           specialize (Hprojnrl _ Hins). simpl in Hprojnrl; lia.
+        -- admit.
+      * intros x; apply env_scan_proper.
+      * intros x1 k1 x2 k2 m p H1 H2 H3 H4. rewrite Zrange_nth_error in *.
+        enough (lb + Z.of_nat k1 = lb + Z.of_nat k2) by lia.
+        eapply env_scan_inj_rev; [destruct H3 as [? <-]; exact H1|destruct H4 as [? <-]; exact H2].
+      * intros x1 n1 p1 k1 x2 n2 p2 k2 Hcmp H1 H2 H3 H4.
+        rewrite Zrange_nth_error in *.
         apply env_scan_begin in H1; apply env_scan_begin in H2. simpl in *.
-        rewrite H1, H2 in Hcmp. eapply lex_app_not_gt; rewrite Hcmp. congruence.
-    + simpl. intros m p. rewrite env_scan_extend; eauto; try lia.
-      * replace (S (n - S d)) with (n - d)%nat by lia. apply Hproj.
-      * intros x; rewrite <- Hlbub. unfold in_poly; rewrite forallb_forall. apply forall_ext; intros c.
-        split; intros H; intros; apply H; rewrite filter_In in *; reflect; tauto.
+        rewrite H1, H2 in Hcmp.
+        enough (lb + Z.of_nat k2 <= lb + Z.of_nat k1) by lia.
+        eapply lex_app_not_gt.
+        destruct H3 as [? <-]; destruct H4 as [? <-].
+        rewrite Hcmp; congruence.
+      * simpl. intros m p.
+        erewrite env_scan_extend_many; [reflexivity|exact Hlen|lia|].
+        intros x Hscanx. apply Hlbub; simpl.
+        erewrite <- env_scan_pi_equiv in Hscanx; [|apply make_npis_simplify_equiv; eauto].
+        assert (Hpin : in_poly p pol = true) by (eapply env_scan_make_npis_in; eauto).
+        rewrite env_scan_begin in Hpin by (exact Hscanx).
+        erewrite <- in_poly_nrlength in Hpin; [|exact (Hprojnrl _ Hins)].
+        rewrite resize_app in Hpin; [auto|].
+        rewrite app_length, rev_length. simpl. lia.
+    + intros. apply subscan_proper.
+    + intros [[pol1 pl1] inner1] k1 [[pol2 pl2] inner2] k2 m p Hscan1 Hscan2 Hnth1 Hnth2.
+      rewrite nth_error_combine in Hnth1, Hnth2. simpl in *.
+      destruct Hnth1 as [Hnth1 _]; destruct Hnth2 as [Hnth2 _].
+      apply subscan_in in Hscan1; apply subscan_in in Hscan2.
+      eapply split_and_sort_disjoint; eauto.
+    + intros [[pol1 pl1] inner1] m1 p1 k1 [[pol2 pl2] inner2] m2 p2 k2 Hcmp Hscan1 Hscan2 Hnth1 Hnth2.
+      rewrite nth_error_combine in Hnth1, Hnth2. simpl in *.
+      destruct Hnth1 as [Hnth1 _]; destruct Hnth2 as [Hnth2 _].
+      rewrite env_scan_begin with (p := p1) in Hcmp by (unfold subscan in Hscan1; reflect; destruct Hscan1; eauto).
+      rewrite env_scan_begin with (p := p2) in Hcmp by (unfold subscan in Hscan2; reflect; destruct Hscan2; eauto).
+      apply subscan_in_env in Hscan1; [|rewrite rev_length; apply nth_error_In in Hnth1; specialize (Hprojnrl _ Hnth1); simpl in *; lia].
+      apply subscan_in_env in Hscan2; [|rewrite rev_length; apply nth_error_In in Hnth2; specialize (Hprojnrl _ Hnth2); simpl in *; lia].
+      rewrite lex_compare_app, lex_compare_reflexive in Hcmp by auto.
+      destruct (k2 <=? k1)%nat eqn:Hprec; reflect; [auto|exfalso].
+      eapply split_and_sort_sorted in Hprec; eauto. simpl in Hprec.
+      unfold canPrecede in Hprec.
+      specialize (Hprec _ (nth (length (rev env)) p2 0) Hscan1).
+      rewrite assign_app_ge, app_nth2 in Hprec by (rewrite rev_length; lia).
+      rewrite rev_length, Hlen, Nat.sub_diag in Hprec.
+      rewrite rev_length, Hlen in Hscan1, Hscan2, Hcmp.
+      specialize (Hprec Hscan2). simpl in Hprec.
+      apply lex_compare_lt_head in Hcmp. rewrite !nth_skipn, !Nat.add_0_r in Hcmp.
+      lia.
+    + intros m p. simpl.
+      apply eq_iff_eq_true. rewrite existsb_exists. split.
+      * intros [[[pol pl] inner1] [Hin Hsubscan]].
+        unfold subscan in Hsubscan. reflect. tauto.
+      * intros Hscan.
+        enough (exists x, In x projsep /\ subscan pis (fst x) (snd x) (rev env) n m p = true).
+        {
+          destruct H as [polpl [Hin Hsub]].
+          eapply in_l_combine in Hin; [|eapply mapM_length; exact Hinner].
+          destruct Hin as [inner1 Hin].
+          exists (polpl, inner1); simpl; tauto.
+        }
+        unfold subscan.
+        rewrite Hscan.
+        unfold env_scan in Hscan. destruct (nth_error pis m) as [pi|] eqn:Hpi; [|congruence].
+        reflect.
+        destruct (mapM_nth_error2 _ _ _ _ _ _ Hpi _ Hprojs) as [pol [Hproj Hpol]].
+        destruct Hscan as [[_ Hpresize] Hpin].
+        generalize (project_inclusion2 _ _ _ Hpin _ Hproj). intros Hpin2.
+        destruct (split_and_sort_cover _ _ _ Hprojsep _ _ _ Hpol Hpin2) as [ppl [Hpplin [Hppl1 Hppl2]]].
+        exists ppl. split; [auto|].
+        reflect; split; [|auto]; split; auto.
+        rewrite existsb_exists; exists m; reflect; auto.
 Qed.
-*)
 
 
 
