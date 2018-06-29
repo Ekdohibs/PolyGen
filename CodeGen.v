@@ -1296,6 +1296,15 @@ Proof.
   simpl. rewrite dot_product_mult_right. lia.
 Qed.
 
+(*
+Definition poly_disjoint pol1 pol2 := forall p, in_poly p pol1 = false \/ in_poly p pol2 = false.
+
+Fixpoint all_disjoint (l : list polyhedron) :=
+  match l with
+  | nil => True
+  | p :: l => (forall p2, In p2 l -> poly_disjoint p p2) /\ all_disjoint l
+  end.
+
 Fixpoint poly_difference p1 p2 :=
   match p2 with
   | nil => nil
@@ -1315,14 +1324,6 @@ Proof.
     + destruct forallb; reflexivity.
 Qed.
 
-Definition poly_disjoint pol1 pol2 := forall p, in_poly p pol1 = false \/ in_poly p pol2 = false.
-
-Fixpoint all_disjoint (l : list polyhedron) :=
-  match l with
-  | nil => True
-  | p :: l => (forall p2, In p2 l -> poly_disjoint p p2) /\ all_disjoint l
-  end.
-
 Lemma poly_difference_disjoint :
   forall p2 p1, all_disjoint (poly_difference p1 p2).
 Proof.
@@ -1338,6 +1339,7 @@ Proof.
       simpl; rewrite Hsat, existsb_forall; unfold in_poly; simpl.
       intros Hdef; apply Hdef. auto.
 Qed.
+ *)
 
 Definition isBottom pol :=
   BIND p <- lift (ExactCs.fromCs_unchecked (poly_to_Cs pol)) -; lift (CstrDomain.isBottom p).
@@ -1362,6 +1364,36 @@ Lemma isBottom_correct_1 :
 Proof.
   intros pol. generalize (isBottom_correct pol 1).
   rewrite expand_poly_1. intros H; apply H; lia.
+Qed.
+
+Definition isIncl pol1 pol2 :=
+  BIND p1 <- lift (ExactCs.fromCs_unchecked (poly_to_Cs pol1)) -;
+  BIND p2 <- lift (ExactCs.fromCs (poly_to_Cs pol2)) -;
+  match p2 with Some p2 => lift (CstrDomain.isIncl p1 p2) | None => pure false end.
+
+Lemma isIncl_correct :
+  forall pol1 pol2 t, 0 < t -> If isIncl pol1 pol2 THEN forall p, in_poly p (expand_poly t pol1) = true -> in_poly p (expand_poly t pol2) = true.
+Proof.
+  intros pol1 pol2 t Ht b Hincl.
+  destruct b; simpl; [|auto]. intros p Hin.
+  unfold isIncl in Hincl.
+  bind_imp_destruct Hincl p1 Hp1; bind_imp_destruct Hincl p2 Hp2.
+  destruct p2 as [p2|]; [|apply mayReturn_pure in Hincl; congruence].
+  apply mayReturn_lift in Hp1; apply mayReturn_lift in Hp2; apply mayReturn_lift in Hincl.
+  apply CstrDomain.isIncl_correct in Hincl; simpl in Hincl.
+  apply ExactCs.fromCs_unchecked_correct in Hp1.
+  eapply ExactCs.fromCs_correct in Hp2.
+  rewrite <- poly_to_Cs_correct_Q in Hin by auto.
+  apply Hp1, Hincl in Hin. rewrite Hp2 in Hin.
+  rewrite poly_to_Cs_correct_Q in Hin by auto.
+  auto.
+Qed.
+
+Lemma isIncl_correct_1 :
+  forall pol1 pol2, If isIncl pol1 pol2 THEN forall p, in_poly p pol1 = true -> in_poly p pol2 = true.
+Proof.
+  intros pol1 pol2. generalize (isIncl_correct pol1 pol2 1).
+  rewrite !expand_poly_1. intros H; apply H; lia.
 Qed.
 
 (*
@@ -1406,6 +1438,7 @@ Qed.
 Definition canPrecede n pol1 pol2 :=
   forall p1 x, in_poly p1 pol1 = true -> in_poly (assign n x p1) pol2 = true -> nth n p1 0 < x.
 
+(*
 Definition check_canPrecede n (pol1 pol2 proj2 : polyhedron) :=
   let g2 := filter (fun c => nth n (fst c) 0 <? 0) pol2 in
   isBottom (pol1 ++ proj2 ++ g2).
@@ -1436,6 +1469,39 @@ Proof.
     unfold satisfies_constraint in *. reflect. rewrite dot_product_assign_left in Hin.
     nia.
 Qed.
+ *)
+
+Definition check_canPrecede n (pol1 pol2 proj1 : polyhedron) :=
+  let g1 := filter (fun c => 0 <? nth n (fst c) 0) pol1 in
+  isBottom (pol2 ++ proj1 ++ g1).
+
+Lemma check_canPrecede_correct :
+  forall n pol1 pol2 proj1,
+    isExactProjection n pol1 proj1 ->
+    If check_canPrecede n pol1 pol2 proj1 THEN canPrecede n pol1 pol2.
+Proof.
+  intros n pol1 pol2 proj1 Hproj1 b Hprec.
+  destruct b; simpl; [|auto].
+  intros p1 x Hp1 Hpx.
+  unfold check_canPrecede in Hprec. apply isBottom_correct_1 in Hprec; simpl in Hprec.
+  specialize (Hprec (assign n x p1)). rewrite !in_poly_app in Hprec. reflect.
+  rewrite Hpx in Hprec.
+  apply isExactProjection_weaken1 in Hproj1. eapply isExactProjection_assign_1 in Hproj1; [|exact Hp1].
+  rewrite Hproj1 in Hprec.
+  destruct Hprec as [? | [? | Hprec]]; try congruence.
+  assert (Hin : in_poly p1 (filter (fun c => 0 <? nth n (fst c) 0) pol1) = true).
+  - unfold in_poly in *; rewrite forallb_forall in *.
+    intros c. rewrite filter_In. intros; apply Hp1; tauto.
+  - rewrite <- Z.nle_gt. intros Hle.
+    eapply eq_true_false_abs; [|exact Hprec].
+    unfold in_poly in *; rewrite forallb_forall in *.
+    intros c. rewrite filter_In. intros Hc.
+    specialize (Hin c). rewrite filter_In in Hin. specialize (Hin Hc).
+    destruct Hc as [Hcin Hc].
+    unfold satisfies_constraint in *. reflect. rewrite dot_product_assign_left.
+    nia.
+Qed.
+
 
 Module Proj := FourierMotzkinProject CoreAlarmed.
 (* Module Canon := NaiveCanonizer CoreAlarmed. *)
@@ -2329,22 +2395,485 @@ Definition dummy_pi := {|
   pi_schedule := nil
 |}.
 
-Axiom split_and_sort : nat -> list polyhedron -> imp (list (polyhedron * list nat)).
-Axiom split_and_sort_index_NoDup :
+Require Import Permutation.
+
+Axiom topo_sort : list (list bool) -> imp (list nat).
+Axiom topo_sort_permutation :
+  forall cstr, WHEN out <- topo_sort cstr THEN Permutation (n_range (length cstr)) out.
+Axiom topo_sort_sorted :
+  forall cstr, WHEN out <- topo_sort cstr THEN forall k1 k2, (k1 < k2 < length cstr)%nat ->
+               nth (nth k2 out 0%nat) (nth (nth k1 out 0%nat) cstr nil) true = false.
+
+Lemma topo_sort_indices_correct :
+  forall cstr, WHEN out <- topo_sort cstr THEN forall i, In i out -> (i < length cstr)%nat.
+Proof.
+  intros cstr out Hout i Hin.
+  rewrite <- n_range_in.
+  eapply Permutation_in; [symmetry; apply topo_sort_permutation|]; eauto.
+Qed.
+
+Lemma topo_sort_length :
+  forall cstr, WHEN out <- topo_sort cstr THEN length out = length cstr.
+Proof.
+  intros cstr out Hout.
+  erewrite Permutation_length; [|symmetry; eapply topo_sort_permutation; eauto].
+  rewrite n_range_length; eauto.
+Qed.
+
+(* TODO: don't include bottoms *)
+Fixpoint poly_difference p1 p2 :=
+  match p2 with
+  | nil => pure nil
+  | c :: p2 =>
+    BIND pl1 <- VplCanonizerZ.canonize (neg_constraint c :: p1) -;
+    BIND diff <- poly_difference (c :: p1) p2 -;
+    pure (pl1 :: diff)
+  end.
+
+Lemma poly_difference_def :
+  forall p2 p1 v, WHEN pl <- poly_difference p1 p2 THEN
+                  existsb (in_poly v) pl = in_poly v p1 && negb (in_poly v p2).
+Proof.
+  induction p2.
+  - intros p1 v pl Hpl. apply mayReturn_pure in Hpl; rewrite <- Hpl. simpl. destruct in_poly; auto.
+  - intros p1 v pl Hpl. simpl in *.
+    bind_imp_destruct Hpl pl1 Hpl1; bind_imp_destruct Hpl diff Hdiff; apply mayReturn_pure in Hpl; rewrite <- Hpl.
+    simpl. rewrite IHp2; [|eauto].
+    rewrite VplCanonizerZ.canonize_correct; [|eauto]. simpl.
+    rewrite neg_constraint_correct; unfold in_poly; simpl.
+    destruct (satisfies_constraint v a); simpl.
+    + reflexivity.
+    + destruct forallb; reflexivity.
+Qed.
+
+Definition all_disjoint pl := forall p k1 k2 pol1 pol2, nth_error pl k1 = Some pol1 -> nth_error pl k2 = Some pol2 ->
+                                                   in_poly p pol1 = true -> in_poly p pol2 = true -> k1 = k2.
+
+Lemma all_disjoint_nil :
+  all_disjoint nil.
+Proof.
+  intros p [|k1] [|k2] ? ? ? ? ? ?; simpl in *; congruence.
+Qed.
+
+Lemma all_disjoint_cons :
+  forall pol pl, all_disjoint pl -> (forall p pol1, In pol1 pl -> in_poly p pol = true -> in_poly p pol1 = true -> False) -> all_disjoint (pol :: pl).
+Proof.
+  intros pol pl Hdisj H p k1 k2 pol1 pol2 Hk1 Hk2 Hpol1 Hpol2.
+  destruct k1 as [|k1]; destruct k2 as [|k2]; [auto| | |erewrite (Hdisj p k1 k2); eauto]; simpl in *; exfalso;
+    [apply nth_error_In in Hk2|apply nth_error_In in Hk1]; eapply (H p); try congruence; eauto.
+Qed.
+
+Lemma all_disjoint_cons_rev :
+  forall pol pl, all_disjoint (pol :: pl) -> all_disjoint pl /\ (forall p pol1, In pol1 pl -> in_poly p pol = true -> in_poly p pol1 = true -> False).
+Proof.
+  intros pol pl Hdisj.
+  split.
+  - intros p k1 k2 ? ? ? ? ? ?. assert (S k1 = S k2) by (eapply (Hdisj p (S k1) (S k2)); eauto). congruence.
+  - intros p pol1 Hin H1 H2.
+    apply In_nth_error in Hin. destruct Hin as [k Hk].
+    specialize (Hdisj p 0%nat (S k) pol pol1).
+    enough (0%nat = S k) by congruence.
+    apply Hdisj; auto.
+Qed.
+
+Lemma all_disjoint_app :
+  forall pl1 pl2, all_disjoint pl1 -> all_disjoint pl2 -> (forall p pol1 pol2, In pol1 pl1 -> In pol2 pl2 -> in_poly p pol1 = true -> in_poly p pol2 = true -> False) ->
+             all_disjoint (pl1 ++ pl2).
+Proof.
+  induction pl1.
+  - intros; simpl; auto.
+  - intros pl2 H1 H2 H. simpl.
+    apply all_disjoint_cons_rev in H1. simpl in H.
+    apply all_disjoint_cons; [apply IHpl1; try tauto|].
+    + intros; eapply H; eauto.
+    + intros p pol1 Hin. rewrite in_app_iff in Hin; destruct Hin; [|eapply H; eauto].
+      destruct H1 as [_ H1]; eapply H1; eauto.
+Qed.
+
+Lemma all_disjoint_flatten :
+  forall pll, (forall l1, In l1 pll -> all_disjoint l1) ->
+         (forall p k1 k2 l1 l2 pol1 pol2, nth_error pll k1 = Some l1 -> nth_error pll k2 = Some l2 -> In pol1 l1 -> In pol2 l2 ->
+                                     in_poly p pol1 = true -> in_poly p pol2 = true -> k1 = k2) -> all_disjoint (flatten pll).
+Proof.
+  induction pll.
+  - intros; apply all_disjoint_nil.
+  - intros Hdisj Hdisj2. simpl.
+    apply all_disjoint_app; [apply Hdisj; simpl; auto|apply IHpll|].
+    + intros; apply Hdisj; simpl; auto.
+    + intros p k1 k2 ? ? ? ? ? ? ? ? ? ?. enough (S k1 = S k2) by congruence. eapply Hdisj2; simpl in *; eauto.
+    + intros p pol1 pol2 Ha Hfl Hin1 Hin2.
+      rewrite flatten_In in Hfl. destruct Hfl as [u [Hinu Huin]].
+      apply In_nth_error in Huin. destruct Huin as [k Hk].
+      enough (0%nat = S k) by congruence. eapply Hdisj2; simpl in *; eauto.
+Qed.
+
+Lemma poly_difference_disjoint :
+  forall p2 p1, WHEN pols <- poly_difference p1 p2 THEN all_disjoint pols.
+Proof.
+  induction p2.
+  - intros p1 pols Hpols; simpl in *. apply mayReturn_pure in Hpols; rewrite <- Hpols.
+    apply all_disjoint_nil.
+  - intros p1 pols Hpols. simpl in *.
+    bind_imp_destruct Hpols pl1 Hpl1; bind_imp_destruct Hpols diff Hdiff; apply mayReturn_pure in Hpols; rewrite <- Hpols.
+    apply all_disjoint_cons; [eapply IHp2; eauto|].
+    intros p pol1 Hpolin Hinpl Hinpol1.
+    rewrite VplCanonizerZ.canonize_correct in Hinpl; [|eauto].
+    eapply poly_difference_def with (v := p) in Hdiff.
+    unfold in_poly in *; simpl in *.
+    rewrite neg_constraint_correct in Hinpl.
+    destruct (satisfies_constraint p a) eqn:Hsat; simpl in *.
+    + congruence.
+    + rewrite existsb_forall in Hdiff; rewrite Hdiff in Hinpol1; [congruence|auto].
+Qed.
+
+Axiom separate_polys : polyhedron -> polyhedron -> imp (polyhedron * list polyhedron).
+Axiom separate_polys_nrl :
+  forall pol1 pol2 n, (poly_nrl pol1 <= n)%nat -> (poly_nrl pol2 <= n)%nat ->
+                 WHEN sep <- separate_polys pol1 pol2 THEN
+                      forall pol, In pol (fst sep :: snd sep) -> (poly_nrl pol <= n)%nat.
+Axiom separate_polys_cover :
+  forall pol1 pol2, WHEN sep <- separate_polys pol1 pol2 THEN
+                    forall p, in_poly p pol2 = true <-> exists pol, In pol (fst sep :: snd sep) /\ in_poly p pol = true.
+Axiom separate_polys_separate :
+  forall pol1 pol2, WHEN sep <- separate_polys pol1 pol2 THEN
+                    forall p pol, In pol (snd sep) -> in_poly p pol = true -> in_poly p pol1 = false.
+Axiom separate_polys_disjoint :
+  forall pol1 pol2, WHEN sep <- separate_polys pol1 pol2 THEN all_disjoint (fst sep :: snd sep).
+
+Fixpoint split_polys_rec (l : list polyhedron) (n : nat) : imp (list (polyhedron * list nat)) :=
+  match l with
+  | nil => pure ((nil, nil) :: nil)
+  | p :: l =>
+    BIND spl <- split_polys_rec l (S n) -;
+    BIND spl1 <- mapM (fun '(pol, pl) =>
+         BIND sep <- separate_polys p pol -;
+         pure ((fst sep, n :: pl) :: map (fun pp => (pp, pl)) (snd sep))
+    ) spl -;
+    pure (flatten spl1)
+  end.
+
+Lemma split_polys_rec_index_correct :
+  forall pols n, WHEN out <- split_polys_rec pols n THEN forall polpl i, In polpl out -> In i (snd polpl) -> (n <= i < n + length pols)%nat.
+Proof.
+  induction pols.
+  - intros n out Hout ppl i Hin Hiin.
+    simpl in *. apply mayReturn_pure in Hout. rewrite <- Hout in Hin.
+    simpl in Hin; destruct Hin as [Hin | Hin]; [|tauto]. rewrite <- Hin in Hiin; simpl in Hiin; tauto.
+  - intros n out Hout ppl i Hin Hiin.
+    simpl in *.
+    bind_imp_destruct Hout spl Hspl; bind_imp_destruct Hout spl1 Hspl1; apply mayReturn_pure in Hout; rewrite <- Hout in *.
+    rewrite flatten_In in Hin. destruct Hin as [u [Hppl Hu]].
+    eapply mapM_in_iff in Hu; [|eauto].
+    destruct Hu as [[pol pl] [Hu Hpolpl]].
+    bind_imp_destruct Hu sep Hsep. apply mayReturn_pure in Hu; rewrite <- Hu in *.
+    simpl in Hppl. rewrite in_map_iff in Hppl.
+    specialize (IHpols _ _ Hspl (pol, pl)); simpl in IHpols.
+    destruct Hppl as [Heq | [? [Heq _]]]; rewrite <- Heq in Hiin; simpl in Hiin; firstorder lia.
+Qed.
+
+Lemma split_polys_rec_index_NoDup :
+  forall pols n, WHEN out <- split_polys_rec pols n THEN forall polpl, In polpl out -> NoDup (snd polpl).
+Proof.
+  induction pols.
+  - intros n out Hout ppl Hin.
+    simpl in *. apply mayReturn_pure in Hout. rewrite <- Hout in Hin.
+    simpl in Hin; destruct Hin as [Hin | Hin]; [|tauto]. rewrite <- Hin; constructor.
+  - intros n out Hout ppl Hin.
+    simpl in *.
+    bind_imp_destruct Hout spl Hspl; bind_imp_destruct Hout spl1 Hspl1; apply mayReturn_pure in Hout; rewrite <- Hout in *.
+    rewrite flatten_In in Hin. destruct Hin as [u [Hppl Hu]].
+    eapply mapM_in_iff in Hu; [|eauto].
+    destruct Hu as [[pol pl] [Hu Hpolpl]].
+    bind_imp_destruct Hu sep Hsep. apply mayReturn_pure in Hu; rewrite <- Hu in *.
+    simpl in Hppl. rewrite in_map_iff in Hppl.
+    specialize (IHpols _ _ Hspl (pol, pl)); simpl in IHpols.
+    destruct Hppl as [Heq | [? [Heq _]]]; rewrite <- Heq; simpl; [|intuition].
+    constructor; [|intuition].
+    intros H; eapply (split_polys_rec_index_correct _ _ _ Hspl _ _ Hpolpl) in H.
+    lia.
+Qed.
+
+Lemma split_polys_rec_nrl :
+  forall pols n, WHEN out <- split_polys_rec pols n THEN
+                 forall k, (forall pol, In pol pols -> (poly_nrl pol <= k)%nat) -> (forall ppl, In ppl out -> (poly_nrl (fst ppl) <= k)%nat).
+Proof.
+  induction pols.
+  - intros n out Hout k Hpols ppl Hin.
+    simpl in *. apply mayReturn_pure in Hout. rewrite <- Hout in Hin.
+    simpl in Hin; destruct Hin as [Hin | Hin]; [|tauto]. rewrite <- Hin; unfold poly_nrl; simpl; lia.
+  - intros n out Hout k Hpols ppl Hin.
+    simpl in *.
+    bind_imp_destruct Hout spl Hspl; bind_imp_destruct Hout spl1 Hspl1; apply mayReturn_pure in Hout; rewrite <- Hout in *.
+    rewrite flatten_In in Hin. destruct Hin as [u [Hppl Hu]].
+    eapply mapM_in_iff in Hu; [|eauto].
+    destruct Hu as [[pol pl] [Hu Hpolpl]].
+    bind_imp_destruct Hu sep Hsep. apply mayReturn_pure in Hu; rewrite <- Hu in *.
+    eapply separate_polys_nrl in Hsep; [apply Hsep|firstorder|eapply (IHpols _ _ Hspl _ _ (pol, pl)); eauto]. Unshelve. 2:eauto.
+    apply in_map with (f := fst) in Hppl; simpl in Hppl; rewrite map_map, map_id in Hppl.
+    exact Hppl.
+Qed.
+
+Lemma flatten_map :
+  forall (A B : Type) (f : A -> B) l, map f (flatten l) = flatten (map (map f) l).
+Proof.
+  intros A B f. induction l; simpl; auto.
+  rewrite map_app, IHl; reflexivity.
+Qed.
+
+Lemma split_polys_rec_disjoint :
+  forall pols n, WHEN out <- split_polys_rec pols n THEN all_disjoint (map fst out).
+Proof.
+    induction pols.
+  - intros n out Hout p k1 k2 ppl1 ppl2 Hk1 Hk2 Hppl1 Hppl2.
+    simpl in *. apply mayReturn_pure in Hout. rewrite <- Hout in *.
+    destruct k1 as [|[|k1]]; destruct k2 as [|[|k2]]; simpl in *; congruence.
+  - intros n out Hout.
+    simpl in *.
+    bind_imp_destruct Hout spl Hspl; bind_imp_destruct Hout spl1 Hspl1; apply mayReturn_pure in Hout; rewrite <- Hout in *.
+    rewrite flatten_map. apply all_disjoint_flatten.
+    + intros l1 Hl1.
+      rewrite in_map_iff in Hl1. destruct Hl1 as [pll [Hpll Hin1]]; rewrite <- Hpll.
+      eapply mapM_in_iff in Hin1; [|eauto]. destruct Hin1 as [[pol pl] [H1 H2]].
+      bind_imp_destruct H1 sep Hsep; apply mayReturn_pure in H1; rewrite <- H1.
+      simpl; rewrite map_map, map_id.
+      eapply separate_polys_disjoint; eauto.
+    + intros p k1 k2 l1 l2 pol1 pol2 Hk1 Hk2 Hl1 Hl2 Hin1 Hin2.
+      rewrite nth_error_map_iff in Hk1, Hk2.
+      destruct Hk1 as [pll1 [Hk1 Hll1]]; destruct Hk2 as [pll2 [Hk2 Hll2]]; rewrite Hll1, Hll2 in *.
+      eapply mapM_nth_error1 in Hk1; [|exact Hspl1]. destruct Hk1 as [[pp1 pl1] [H1 Hk1]].
+      eapply mapM_nth_error1 in Hk2; [|exact Hspl1]. destruct Hk2 as [[pp2 pl2] [H2 Hk2]].
+      bind_imp_destruct H1 sep1 Hsep1; bind_imp_destruct H2 sep2 Hsep2.
+      apply mayReturn_pure in H1; apply mayReturn_pure in H2. rewrite <- H1 in Hl1; rewrite <- H2 in Hl2.
+      simpl in Hl1, Hl2; rewrite map_map, map_id in Hl1, Hl2.
+      assert (Ht1 : in_poly p pp1 = true) by (erewrite (separate_polys_cover _ _ _ Hsep1 _); exists pol1; auto).
+      assert (Ht2 : in_poly p pp2 = true) by (erewrite (separate_polys_cover _ _ _ Hsep2 _); exists pol2; auto).
+      apply map_nth_error with (f := fst) in Hk1; apply map_nth_error with (f := fst) in Hk2.
+      specialize (IHpols _ _ Hspl _ _ _ _ _ Hk1 Hk2 Ht1 Ht2). auto.
+Qed.
+
+Lemma split_polys_rec_cover_all :
+  forall pols n, WHEN out <- split_polys_rec pols n THEN forall p, exists ppl, In ppl out /\ in_poly p (fst ppl) = true /\
+                                                               (forall k pol, nth_error pols k = Some pol -> in_poly p pol = true -> In (n + k)%nat (snd ppl)).
+Proof.
+  induction pols.
+  - intros n out Hout p.
+    simpl in *. apply mayReturn_pure in Hout. exists (nil, nil). rewrite <- Hout.
+    simpl; split; [|split]; auto. intros [|k]; simpl; congruence.
+  - intros n out Hout p.
+    simpl in *.
+    bind_imp_destruct Hout spl Hspl; bind_imp_destruct Hout spl1 Hspl1; apply mayReturn_pure in Hout; rewrite <- Hout in *.
+    destruct (IHpols _ _ Hspl p) as [[pol pl] [Hppl1 [Hin1 Hins1]]]; simpl in *.
+    apply In_nth_error in Hppl1. destruct Hppl1 as [k1 Hk1].
+    destruct (mapM_nth_error2 _ _ _ _ _ _ Hk1 _ Hspl1) as [lppl [Hlppl Hk2]].
+    apply nth_error_In in Hk2.
+    bind_imp_destruct Hlppl sep Hsep; apply mayReturn_pure in Hlppl.
+    eapply separate_polys_cover in Hin1; [|eauto]. destruct Hin1 as [pol1 [Hpol1in Hinpol1]].
+    simpl in Hpol1in.
+    destruct Hpol1in as [Hpol1in | Hpol1in]; [exists (pol1, n :: pl)|exists (pol1, pl)]; simpl; rewrite flatten_In.
+    all: split; [exists lppl; split; [rewrite <- Hlppl; simpl|auto]|split; [auto|]].
+    + left; auto.
+    + intros [|k] pol2 Hk Hin2; simpl in *; [left; lia|right; rewrite Nat.add_succ_r; eapply Hins1; eauto].
+    + right. rewrite in_map_iff; exists pol1. auto.
+    + intros [|k] pol2 Hk Hin2; simpl in *; [|rewrite Nat.add_succ_r; eapply Hins1; eauto].
+      exfalso. eapply separate_polys_separate in Hinpol1; eauto. congruence.
+Qed.
+
+Definition split_polys pols := split_polys_rec pols 0%nat.
+
+Lemma split_polys_index_correct :
+  forall pols, WHEN out <- split_polys pols THEN forall polpl i, In polpl out -> In i (snd polpl) -> (i < length pols)%nat.
+Proof.
+  intros pols out Hout ppl i.
+  generalize (split_polys_rec_index_correct pols 0%nat out Hout ppl i). intuition lia.
+Qed.
+
+Lemma split_polys_index_NoDup :
+  forall pols, WHEN out <- split_polys pols THEN forall polpl, In polpl out -> NoDup (snd polpl).
+Proof.
+  intros pols.
+  apply (split_polys_rec_index_NoDup pols 0%nat).
+Qed.
+
+Lemma split_polys_nrl :
+  forall pols, WHEN out <- split_polys pols THEN forall k, (forall pol, In pol pols -> (poly_nrl pol <= k)%nat) -> (forall ppl, In ppl out -> (poly_nrl (fst ppl) <= k)%nat).
+Proof.
+  intros pols.
+  apply (split_polys_rec_nrl pols 0%nat).
+Qed.
+
+Lemma split_polys_disjoint :
+  forall pols, WHEN out <- split_polys pols THEN
+          forall p k1 k2 ppl1 ppl2, nth_error out k1 = Some ppl1 -> nth_error out k2 = Some ppl2 ->
+                               in_poly p (fst ppl1) = true -> in_poly p (fst ppl2) = true -> k1 = k2.
+Proof.
+  intros pols.
+  apply (split_polys_rec_disjoint pols 0%nat).
+Qed.
+
+Lemma split_polys_cover :
+  forall pols, WHEN out <- split_polys pols THEN
+          forall p pol i, nth_error pols i = Some pol -> in_poly p pol = true -> exists ppl, In ppl out /\ In i (snd ppl) /\ in_poly p (fst ppl) = true.
+Proof.
+  intros pols out Hout p pol i Hi Hin.
+  destruct (split_polys_rec_cover_all _ _ _ Hout p) as [ppl Hppl].
+  exists ppl. firstorder.
+Qed.
+
+Definition build_dependency_matrix n pols :=
+  mapM (fun pol1 =>
+          BIND proj1 <- Proj.project (n, pol1) -;
+          mapM (fun pol2 => fmap negb (check_canPrecede n pol1 pol2 proj1)) pols) pols.
+
+Lemma build_dependency_matrix_length :
+  forall n pols, WHEN out <- build_dependency_matrix n pols THEN length out = length pols.
+Proof.
+  intros n pols out Hout.
+  unfold build_dependency_matrix in Hout.
+  symmetry; eapply mapM_length; eauto.
+Qed.
+
+Lemma build_dependency_matrix_canPrecede :
+  forall n pols, WHEN out <- build_dependency_matrix n pols THEN
+                 forall k1 k2 ppl1 ppl2, nth_error pols k1 = Some ppl1 -> nth_error pols k2 = Some ppl2 ->
+                                    nth k2 (nth k1 out nil) true = false ->
+                                    canPrecede n ppl1 ppl2.
+Proof.
+  intros n pols out Hout k1 k2 ppl1 ppl2 Hk1 Hk2 H.
+  unfold build_dependency_matrix in Hout.
+  eapply mapM_nth_error2 with (k := k1) in Hout; [|eauto].
+  destruct Hout as [row [Hrow Hout]].
+  bind_imp_destruct Hrow proj Hproj.
+  eapply mapM_nth_error2 with (k := k2) in Hrow; [|eauto].
+  destruct Hrow as [b [Hb Hrow]].
+  erewrite nth_error_nth with (n := k1) in H; [|eauto].
+  erewrite nth_error_nth in H; [|eauto]. rewrite H in Hb.
+  unfold fmap in Hb. bind_imp_destruct Hb b1 Hb1; apply mayReturn_pure in Hb.
+  destruct b1; simpl in *; [|congruence].
+  eapply check_canPrecede_correct in Hb1; simpl in Hb1; [auto|].
+  eapply Proj.project_in_iff; eauto.
+Qed.
+
+Definition split_and_sort n pols :=
+  BIND spl <- split_polys pols -;
+  BIND deps <- build_dependency_matrix n (map fst spl) -;
+  BIND indices <- topo_sort deps -;
+  pure (map (fun t => nth t spl (nil, nil)) indices).
+
+Lemma split_and_sort_index_NoDup :
   forall n pols, WHEN out <- split_and_sort n pols THEN forall polpl, In polpl out -> NoDup (snd polpl).
-Axiom split_and_sort_index_correct :
+Proof.
+  intros n pols out Hout polpl Hin.
+  unfold split_and_sort in Hout.
+  bind_imp_destruct Hout spl Hspl; bind_imp_destruct Hout deps Hdeps; bind_imp_destruct Hout indices Hindices; apply mayReturn_pure in Hout; rewrite <- Hout in *.
+  rewrite in_map_iff in Hin. destruct Hin as [t [Hpolpl _]].
+  destruct (t <? length spl)%nat eqn:Ht; reflect.
+  - eapply nth_In in Ht; rewrite Hpolpl in Ht.
+    eapply split_polys_index_NoDup in Ht; eauto.
+  - eapply nth_overflow in Ht; rewrite Hpolpl in Ht.
+    rewrite Ht; simpl. constructor.
+Qed.
+
+Lemma split_and_sort_index_correct :
   forall n pols, WHEN out <- split_and_sort n pols THEN forall polpl i, In polpl out -> In i (snd polpl) -> (i < length pols)%nat.
-Axiom split_and_sort_disjoint :
+Proof.
+  intros n pols out Hout polpl i Hin Hiin.
+  unfold split_and_sort in Hout.
+  bind_imp_destruct Hout spl Hspl; bind_imp_destruct Hout deps Hdeps; bind_imp_destruct Hout indices Hindices; apply mayReturn_pure in Hout; rewrite <- Hout in *.
+  rewrite in_map_iff in Hin. destruct Hin as [t [Hpolpl _]].
+  destruct (t <? length spl)%nat eqn:Ht; reflect.
+  - eapply nth_In in Ht; rewrite Hpolpl in Ht.
+    eapply split_polys_index_correct in Ht; eauto.
+  - eapply nth_overflow in Ht; rewrite Hpolpl in Ht.
+    rewrite Ht in Hiin; simpl in Hiin; tauto.
+Qed.
+
+Lemma split_and_sort_nrl :
+  forall n pols, WHEN out <- split_and_sort n pols THEN forall k, (forall pol, In pol pols -> (poly_nrl pol <= k)%nat) -> (forall ppl, In ppl out -> (poly_nrl (fst ppl) <= k)%nat).
+Proof.
+  intros n pols out Hout k Hk ppl Hin.
+  unfold split_and_sort in Hout.
+  bind_imp_destruct Hout spl Hspl; bind_imp_destruct Hout deps Hdeps; bind_imp_destruct Hout indices Hindices; apply mayReturn_pure in Hout; rewrite <- Hout in *.
+  rewrite in_map_iff in Hin. destruct Hin as [t [Hppl _]].
+  destruct (t <? length spl)%nat eqn:Ht; reflect.
+  - eapply nth_In in Ht; rewrite Hppl in Ht.
+    eapply split_polys_nrl in Ht; eauto.
+  - eapply nth_overflow in Ht; rewrite Hppl in Ht.
+    rewrite Ht. unfold poly_nrl; simpl. lia.
+Qed.
+
+Lemma n_range_NoDup :
+  forall n, NoDup (n_range n).
+Proof.
+  induction n.
+  - constructor.
+  - simpl. rewrite NoDup_Add; [|apply Add_app].
+    rewrite app_nil_r. split; [auto|].
+    rewrite n_range_in. lia.
+Qed.
+
+Lemma split_and_sort_disjoint :
   forall n pols, WHEN out <- split_and_sort n pols THEN
           forall p k1 k2 ppl1 ppl2, nth_error out k1 = Some ppl1 -> nth_error out k2 = Some ppl2 ->
                                in_poly p (fst ppl1) = true -> in_poly p (fst ppl2) = true -> k1 = k2.
-Axiom split_and_sort_sorted :
+Proof.
+  intros n pols out Hout p k1 k2 ppl1 ppl2 Hk1 Hk2 Hp1 Hp2.
+  unfold split_and_sort in Hout.
+  bind_imp_destruct Hout spl Hspl; bind_imp_destruct Hout deps Hdeps; bind_imp_destruct Hout indices Hindices; apply mayReturn_pure in Hout; rewrite <- Hout in *.
+  rewrite nth_error_map_iff in Hk1, Hk2.
+  destruct Hk1 as [t1 [Hind1 Ht1]]; destruct Hk2 as [t2 [Hind2 Ht2]].
+  symmetry in Ht1; rewrite <- nth_error_nth_iff in Ht1 by (
+    erewrite <- map_length, <- build_dependency_matrix_length; [|eauto];
+    eapply topo_sort_indices_correct; [eauto|]; apply nth_error_In in Hind1; eauto
+  ).
+  symmetry in Ht2; rewrite <- nth_error_nth_iff in Ht2 by (
+    erewrite <- map_length, <- build_dependency_matrix_length; [|eauto];
+    eapply topo_sort_indices_correct; [eauto|]; apply nth_error_In in Hind2; eauto
+  ).
+  assert (t1 = t2) by (eapply split_polys_disjoint; eauto).
+  eapply NoDup_nth_error; [|apply nth_error_Some; rewrite Hind1; congruence|congruence].
+  eapply Permutation_NoDup; [apply topo_sort_permutation; eauto|apply n_range_NoDup].
+Qed.  
+
+Lemma split_and_sort_cover :
+  forall n pols, WHEN out <- split_and_sort n pols THEN
+            forall p pol i, nth_error pols i = Some pol -> in_poly p pol = true -> exists ppl, In ppl out /\ In i (snd ppl) /\ in_poly p (fst ppl) = true.
+Proof.
+  intros n pols out Hout p pol i Hi Hp.
+  unfold split_and_sort in Hout.
+  bind_imp_destruct Hout spl Hspl; bind_imp_destruct Hout deps Hdeps; bind_imp_destruct Hout indices Hindices; apply mayReturn_pure in Hout; rewrite <- Hout in *.
+  eapply split_polys_cover in Hi; [|eauto]. specialize (Hi Hp).
+  destruct Hi as [ppl [Hin [Hiin Hp1]]]. exists ppl.
+  split; [|auto].
+  apply In_nth_error in Hin; destruct Hin as [k Hk].
+  rewrite in_map_iff. exists k. split; [erewrite nth_error_nth; eauto|].
+  eapply Permutation_in; [eapply topo_sort_permutation; eauto|].
+  erewrite build_dependency_matrix_length, map_length; [|eauto].
+  rewrite n_range_in. apply nth_error_Some. congruence.
+Qed.
+
+Lemma split_and_sort_sorted :
   forall n pols, WHEN out <- split_and_sort n pols THEN
             forall k1 k2 ppl1 ppl2, nth_error out k1 = Some ppl1 -> nth_error out k2 = Some ppl2 ->
                                (k1 < k2)%nat -> canPrecede n (fst ppl1) (fst ppl2).
-Axiom split_and_sort_cover :
-  forall n pols, WHEN out <- split_and_sort n pols THEN
-            forall p pol i, nth_error pols i = Some pol -> in_poly p pol = true -> exists ppl, In ppl out /\ In i (snd ppl) /\ in_poly p (fst ppl) = true.
+Proof.
+  intros n pols out Hout k1 k2 ppl1 ppl2 Hk1 Hk2 Hcmp.
+  bind_imp_destruct Hout spl Hspl; bind_imp_destruct Hout deps Hdeps; bind_imp_destruct Hout indices Hindices; apply mayReturn_pure in Hout; rewrite <- Hout in *.
+  rewrite nth_error_map_iff in Hk1, Hk2.
+  destruct Hk1 as [t1 [Hind1 Ht1]]; destruct Hk2 as [t2 [Hind2 Ht2]].
+  symmetry in Ht1; rewrite <- nth_error_nth_iff in Ht1 by (
+    erewrite <- map_length, <- build_dependency_matrix_length; [|eauto];
+    eapply topo_sort_indices_correct; [eauto|]; apply nth_error_In in Hind1; eauto
+  ).
+  symmetry in Ht2; rewrite <- nth_error_nth_iff in Ht2 by (
+    erewrite <- map_length, <- build_dependency_matrix_length; [|eauto];
+    eapply topo_sort_indices_correct; [eauto|]; apply nth_error_In in Hind2; eauto
+  ).
+  assert (Hcmp2 : (k1 < k2 < length deps)%nat) by (split; [auto|]; rewrite <- topo_sort_length, <- nth_error_Some; [|eauto]; congruence).
+  eapply topo_sort_sorted in Hcmp2; [|eauto].
+  erewrite nth_error_nth with (n := k1) in Hcmp2; [|eauto].
+  erewrite nth_error_nth with (n := k2) in Hcmp2; [|eauto].
+  eapply build_dependency_matrix_canPrecede; [eauto| | |eauto]; erewrite map_nth_error; eauto.
+Qed.
 
 Definition make_npis pis pol pl :=
   map (fun t => let pi := nth t pis dummy_pi in
@@ -2380,7 +2909,7 @@ Qed.
 
 Fixpoint generate_loop_many (d : nat) (n : nat) (pis : list Polyhedral_Instruction) : imp poly_stmt :=
   match d with
-  | O => pure (make_seq (map (fun pi => PInstr pi.(pi_instr) (map (fun t => (1%positive, t)) pi.(pi_transformation))) pis))
+  | O => pure (make_seq (map (fun pi => PGuard pi.(pi_poly) (PInstr pi.(pi_instr) (map (fun t => (1%positive, t)) pi.(pi_transformation)))) pis))
   | S d1 =>
     BIND projs <- mapM (fun pi => project ((n - d1)%nat, pi.(pi_poly))) pis -;
     BIND projsep <- split_and_sort (n - d)%nat projs -;
@@ -2416,8 +2945,9 @@ Proof.
     simpl. unfold poly_nrl; simpl. lia.
 Qed.
 
-Definition generate_invariant n pis env :=
-  forall pi, In pi pis -> project_invariant n pi.(pi_poly) (rev env).
+Definition generate_invariant (n : nat) (pis : list Polyhedral_Instruction) (env : list Z) :=
+  (* forall pi, In pi pis -> project_invariant n pi.(pi_poly) (rev env). *)
+  True.
 
 Lemma project_inclusion2 :
   forall (n : nat) (p : list Z) (pol : list (list Z * Z)),
@@ -2722,16 +3252,12 @@ Proof.
     + eapply iter_semantics_map; [|exact Hsem].
       intros [pi x] mem3 mem4 Hinpixs Hloopseq. simpl in *.
       rewrite combine_n_range_in in Hinpixs.
-      apply PLInstr_inv_sem in Hloopseq.
-      eapply PolyLexProgress with (p := rev env); [|exact Hinpixs| | |apply PolyLexDone].
+      apply PLGuard_inv_sem in Hloopseq.
+      destruct (in_poly (rev env) (pi_poly pi)) eqn:Hinpi;
+        [apply PLInstr_inv_sem in Hloopseq; eapply PolyLexProgress with (p := rev env); [|exact Hinpixs| | |apply PolyLexDone]|].
       * unfold env_scan. rewrite Hinpixs. reflect. split; [auto|].
         split; [rewrite !resize_length_eq; [split; reflexivity| |]; rewrite !rev_length; lia|].
-        (* From generate invariant *)
-        apply nth_error_In in Hinpixs.
-        unfold generate_invariant in Hinv. specialize (Hinv pi Hinpixs).
-        eapply project_id; [|exact Hinv].
-        rewrite poly_nrl_def. unfold pis_have_dimension in Hpidim.
-        rewrite forallb_forall in Hpidim. specialize (Hpidim pi Hinpixs). reflect. lia.
+        exact Hinpi.
       * intros n2 p2 H. destruct (n2 =? x)%nat eqn:Hn2; reflect; [|auto].
         right. apply not_true_is_false; intros Hscan.
         apply env_scan_single in Hscan; [|rewrite rev_length; lia].
@@ -2744,6 +3270,9 @@ Proof.
         destruct H as [[Hmx Hscan] H].
         apply env_scan_single in Hscan; [|rewrite rev_length; lia].
         rewrite Hscan, is_eq_reflexive in H. destruct H; congruence.
+      * rewrite Hloopseq; apply PolyLexDone. intros m p. apply not_true_is_false. intros H; reflect. destruct H as [Hmx Hscan].
+        assert (H : rev env =v= p) by (apply env_scan_single in Hscan; [|rewrite rev_length; lia]; auto). rewrite H in Hinpi.
+        unfold env_scan in Hscan; rewrite Hmx, Hinpixs, Hinpi in Hscan. reflect; destruct Hscan; congruence.
     + intros [i x] m1 m2 -> p1 p2 ->. reflexivity.
     + intros [i1 x1] k1 [i2 x2] k2 m p H1 H2 Hk1 Hk2.
       rewrite nth_error_combine in Hk1, Hk2. simpl in *; reflect.
@@ -2763,7 +3292,13 @@ Proof.
     bind_imp_destruct Hgen projs Hprojs.
     bind_imp_destruct Hgen projsep Hprojsep.
     bind_imp_destruct Hgen inner Hinner.
-    assert (Hprojnrl : forall ppl, In ppl projsep -> (poly_nrl (fst ppl) <= n - d)%nat) by admit.
+    assert (Hprojnrl : forall ppl, In ppl projsep -> (poly_nrl (fst ppl) <= n - d)%nat).
+    {
+      eapply split_and_sort_nrl; [eauto|].
+      intros pol Hpolin. eapply mapM_in_iff in Hpolin; [|eauto].
+      destruct Hpolin as [pi [Hpol Hpiin]].
+      rewrite <- poly_nrl_def. intros c; eapply project_constraint_size; eauto.
+    }
     apply mayReturn_pure in Hgen. rewrite <- Hgen in Hsem; clear Hgen.
     rewrite make_seq_semantics in Hsem.
     unfold env_poly_lex_semantics.
@@ -2790,7 +3325,15 @@ Proof.
         intros x mem5 mem6 Hbounds Hloop. eapply IHd with (env := x :: env); simpl; eauto; try lia.
         -- eapply make_npis_simplify_have_dimension; eauto.
            specialize (Hprojnrl _ Hins). simpl in Hprojnrl; lia.
-        -- admit.
+        (* no longer needed: generate_invariant is [True] now.
+        -- unfold generate_invariant in *. (* generate_invariant preservation *)
+           intros npi Hnpi. eapply mapM_in_iff in Hnpi; [|eauto].
+           destruct Hnpi as [t [Hnpi Ht]]. remember (nth t pis dummy_pi) as pi. simpl in Hnpi.
+           assert (Hpi : In pi pis). {
+             rewrite Heqpi; apply nth_In. erewrite mapM_length; eauto.
+             eapply split_and_sort_index_correct; eauto.
+           }
+         *)
       * intros x; apply env_scan_proper.
       * intros x1 k1 x2 k2 m p H1 H2 H3 H4. rewrite Zrange_nth_error in *.
         enough (lb + Z.of_nat k1 = lb + Z.of_nat k2) by lia.
