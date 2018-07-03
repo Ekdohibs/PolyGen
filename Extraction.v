@@ -34,6 +34,8 @@ Extract Constant PedraQBackend.pr => "(fun x -> Vpl.PedraQOracles.pr (Obj.magic 
 
 Extract Inductive sumbool => "bool" [ "true" "false" ].
 
+Extract Inlined Constant topo_sort_untrusted => "(fun l -> (Topo.coq_toposort l, true))".
+
 Require Import ExtrOcamlBasic.
 Require Import ExtrOcamlString.
 
@@ -42,9 +44,17 @@ Extract Inlined Constant instr => "int".
 Extraction Blacklist String List.
 Extraction Blacklist Misc. (* used by the VPL *)
 
-Axiom dummy : instr.
-Extract Inlined Constant dummy => "0".
+Axiom make_instr : nat -> instr.
+Extract Inlined Constant dummy_instr => "0".
+Extract Inlined Constant make_instr => "Conversions.coqnat_to_int".
 
+(* begin: debugging code *)
+Extract Inlined Constant Debugging.failwith =>
+  "(fun st mesg _ -> raise (CertcheckerConfig.CertCheckerFailure (st, (CoqPr.charListTr mesg))))".
+(*
+Extract Inlined Constant Debugging.trace =>
+   "(fun mode l a -> if (Debugging.traceCmp INFO mode) then (print_string (CoqPr.charListTr l); print_newline()); a)".
+*)
 Definition vr n := (assign n 1 nil, 0).
 Arguments vr n%nat.
 
@@ -101,28 +111,28 @@ Definition test_pi_4 := {|
 Open Scope aff_scope.
 
 Definition test_pi_1 := {|
-   pi_instr := dummy ;
+   pi_instr := make_instr 0%nat ;
    pi_poly := {{ $0 <= c <= a /\ $0 <= d <= b }} ;
    pi_schedule := [d ; c] ;
    pi_transformation := [c ; d] ;
 |}.
 
 Definition test_pi_2 := {|
-   pi_instr := dummy ;
+   pi_instr := make_instr 0%nat ;
    pi_poly := {{ $0 <= d <= a /\ b == 3 * d /\ c == 2 * d }} ;
    pi_schedule := [b ; c ; d] ;
    pi_transformation := [b ; c ; d] ;
 |}.
 
 Definition test_pi_3 := {|
-   pi_instr := dummy ;
+   pi_instr := make_instr 0%nat ;
    pi_poly := {{ $0 <= c <= a /\ $0 <= c - 3 * b <= $2 }} ;
    pi_schedule := [b ; c - 3 * b] ;
    pi_transformation := [c] ;
 |}.
 
 Definition test_pi_4 := {|
-   pi_instr := dummy ;
+   pi_instr := make_instr 0%nat ;
    pi_poly := {{ $0 <= c <= a /\ $0 <= c - 3 * b <= $2 }} ;
    pi_schedule := [c - 3 * b ; b] ;
    pi_transformation := [c] ;
@@ -138,8 +148,27 @@ Definition test_pis := [
   (1%nat, 2%nat, "Tiling-2", test_pi_4)
 ].
 
+Definition test_many := [{|
+   pi_instr := make_instr 0%nat ;
+   pi_poly := {{ $1 <= c <= a /\ d == c}} ;
+   pi_schedule := [] ;
+   pi_transformation := [c ; d] ;
+  |};
+  {|
+   pi_instr := make_instr 1%nat ;
+   pi_poly := {{ $1 <= c <= a /\ c <= d <= a}} ;
+   pi_schedule := [] ;
+   pi_transformation := [c ; d] ;
+  |};
+  {|
+   pi_instr := make_instr 2%nat ;
+   pi_poly := {{ $1 <= c <= b /\ d == a}} ;
+   pi_schedule := [] ;
+   pi_transformation := [c ; d] ;
+|}].
+
 Extraction Inline CoreAlarmed.Base.pure CoreAlarmed.Base.imp.
 
 Cd "extraction".
 
-Separate Extraction ZArith_dec complete_generate pi_elim_schedule test_pis Ring_polynom_AddOnQ CstrLCF ProgVar LinTerm(* test_pi_lex test_pi_generate *).
+Separate Extraction ZArith_dec complete_generate complete_generate_many test_many pi_elim_schedule test_pis Ring_polynom_AddOnQ CstrLCF ProgVar LinTerm(* test_pi_lex test_pi_generate *).

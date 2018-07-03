@@ -1,47 +1,9 @@
-open BinNums
-open Datatypes
+open Conversions
 open PolyLang
 open Loop
 open ImpureConfig
 open Extraction
-
-let coqnat_to_int n =
-  let rec iter n r =
-    match n with
-    | O -> r
-    | S n -> iter n (r + 1)
-  in iter n 0
-
-let int_to_coqnat n =
-  assert (n >= 0);
-  let rec iter n r =
-    match n with
-    | 0 -> r
-    | _ -> iter (n - 1) (S r)
-  in iter n O
-
-let rec coqpos_to_int n =
-  match n with
-  | Coq_xH -> 1
-  | Coq_xO n -> 2 * coqpos_to_int n
-  | Coq_xI n -> 2 * coqpos_to_int n + 1
-
-let rec int_to_coqpos n =
-  assert (n > 0);
-  if n = 1 then Coq_xH
-  else if n land 1 = 0 then Coq_xO (int_to_coqpos (n lsr 1))
-  else Coq_xI (int_to_coqpos (n lsr 1))
-
-let coqZ_to_int n =
-  match n with
-  | Z0 -> 0
-  | Zpos n -> coqpos_to_int n
-  | Zneg n -> - coqpos_to_int n
-
-let int_to_coqZ n =
-  if n = 0 then Z0
-  else if n > 0 then Zpos (int_to_coqpos n)
-  else Zneg (int_to_coqpos (-n))
+open CodeGen
 
 let letter_of_int n =
   assert (n < 26);
@@ -80,6 +42,12 @@ let print_poly ff p =
   List.iter (Format.fprintf ff "%a ,@," print_constraint) p;
   Format.fprintf ff "@]]"
 
+let print_poly_inline ff p =
+  Format.fprintf ff "[";
+  List.iter (Format.fprintf ff "%a , " print_constraint) p;
+  Format.fprintf ff "]"
+
+
 let print_alist ff l =
   Format.fprintf ff "(";
   List.iter (Format.fprintf ff "%a," print_affine) l;
@@ -111,15 +79,23 @@ let rec print_test depth ff = function
   | Not t -> Format.fprintf ff "!(%a)" (print_test depth) t
   | TConstantTest b -> Format.fprintf ff "%s" (if b then "true" else "false")
 
-let rec print_loop depth ff = function
-  | Guard (cond, s) -> Format.fprintf ff "@[<v 2>guard %a@,%a@]" (print_test depth) cond (print_loop depth) s
+let rec print_loop depth indent ff = function
+  | Guard (cond, s) -> Format.fprintf ff "%sguard %a@.%a" indent (print_test depth) cond (print_loop depth (indent ^ "  ")) s
   | Loop (lb, ub, s) ->
     if ub = Sum(lb, Constant (Zpos Coq_xH)) then
-      Format.fprintf ff "let %a = %a in@,%a" print_var_name depth (print_expr depth) lb (print_loop (depth + 1)) s
+      Format.fprintf ff "%slet %a = %a in@.%a" indent print_var_name depth (print_expr depth) lb (print_loop (depth + 1) indent) s
     else
-      Format.fprintf ff "@[<v 2>loop %a = %a to %a@,%a@]" print_var_name depth (print_expr depth) lb (print_expr depth) ub (print_loop (depth + 1)) s
-  | Seq l -> List.iter (print_loop depth ff) l
-  | Instr (x, l) -> Format.fprintf ff "instr %d (" x; List.iter (fun x -> Format.fprintf ff "%a, " (print_expr depth) x) l; Format.fprintf ff ")@,"
+      Format.fprintf ff "%sloop %a = %a to %a@.%a" indent print_var_name depth (print_expr depth) lb (print_expr depth) ub (print_loop (depth + 1) (indent ^ "  ")) s
+  | Seq l -> List.iter (print_loop depth indent ff) l
+  | Instr (x, l) -> Format.fprintf ff "%sinstr %d (" indent x; List.iter (fun x -> Format.fprintf ff "%a, " (print_expr depth) x) l; Format.fprintf ff ")@."
+
+let rec print_polyloop depth indent ff = function
+  | PLoop (pol, s) ->
+    Format.fprintf ff "%sloop %a : %a@.%a" indent print_var_name depth print_poly_inline pol (print_polyloop (depth + 1) (indent ^ "  ")) s
+  | PInstr (x, l) -> Format.fprintf ff "%sinstr %d (" indent x; List.iter (fun x -> Format.fprintf ff "(%a) / %d, " print_affine (snd x) (coqpos_to_int (fst x))) l; Format.fprintf ff ")@."
+  | PSkip -> ()
+  | PSeq (s1, s2) -> print_polyloop depth indent ff s1; print_polyloop depth indent ff s2
+  | PGuard (pol, s) -> Format.fprintf ff "%sguard %a@.%a" indent print_poly_inline pol (print_polyloop depth (indent ^ "  ")) s
 
 let coqstring_to_string l =
   let n = List.length l in
@@ -143,9 +119,23 @@ let process_pi (((env_size, scan_dimensions), name), pi) =
   let totald = int_to_coqnat (env_size + scan_dimensions + List.length pi.pi_schedule) in
   let (gen, ok) = CodeGen.complete_generate scand totald pi_lex in
   if ok then
-    Format.printf "Generated code:@.%a@.@." (print_loop env_size) gen
+    Format.printf "Generated code:@.%a@.@." (print_loop env_size "") gen
   else
     Format.printf "Generation failed.@.@."
 
 
 let () = List.iter process_pi Extraction.test_pis
+(*
+let () =
+  let (gen, ok) = CodeGen.generate_loop_many (int_to_coqnat 2) (int_to_coqnat 4) Extraction.test_many in
+  if ok then
+    Format.printf "Generated code:@.%a@.@." (print_polyloop 2 "") gen
+  else
+    Format.printf "Generation failed.@.@."
+*)
+let () =
+  let (gen, ok) = CodeGen.complete_generate_many (int_to_coqnat 2) (int_to_coqnat 4) Extraction.test_many in
+  if ok then
+    Format.printf "Generated code:@.%a@.@." (print_loop 2 "") gen
+  else
+    Format.printf "Generation failed.@.@."

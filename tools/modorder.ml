@@ -45,14 +45,17 @@ let parse_dependencies depfile =
     end else
       l in
 
+  let add_prefix s =
+    if String.get s 0 <> '.' then "./" ^ s else s in
+
   let enter_line l =
     if not (Str.string_match re_depend_line l 0) then begin
       eprintf "Warning: ill-formed dependency line '%s'\n" l
     end else begin
       let lhs = Str.matched_group 1 l
       and rhs = Str.matched_group 2 l in
-      let lhs = Str.split re_whitespace lhs
-      and rhs = Str.split re_whitespace rhs in
+      let lhs = List.map add_prefix (Str.split re_whitespace lhs)
+      and rhs = List.map add_prefix (Str.split re_whitespace rhs) in
       List.iter (fun lhs -> let node = {
           deps = rhs;
           result = lhs;
