@@ -26,16 +26,30 @@
             <li><a href="html/Misc.html">Misc</a>: extensions to the Coq standard library.</li>
             <li><a href="html/Linalg.html">Linalg</a>: definitions of vectors and operations over them.</li>
             <li><a href="html/Result.html">Result</a>: the error monad.</li>
+            <li><a href="html/TopoSort.html">TopoSort</a>: topological sort.</li>
+            <li><a href="html/Mymap.html">Mymap</a>: workaround a bug in Coq.</li>
+            <li><a href="html/ImpureOperations.html">ImpureOperations</a>: defines sequence and mapM.</li>
+            <li><a href="html/ImpureAlarmConfig.html">ImpureAlarmConfig</a>: the error monad used throughout the code.</li>
+        </ul>
+        <h3>Polyhedral operations</h3>
+        <ul>
+            <li><a href="html/VplInterface.html">VplInterface</a>: interface to the VPL.</li>
+            <li><a href="html/Canonizer.html">Canonizer</a>: simplify redundant constraints in polyhedra.</li>
+            <li><a href="html/Heuristics.html">Heuristics</a>: heuristics for some polyhedral operations.</li>
+            <li><a href="html/Projection.html">Projection</a>: compute polyhedral projections.</li>
         </ul>
         <h3>Languages and semantics</h3>
         <ul>
+            <li><a href="html/Semantics.html">Semantics</a>: memory states, semantics for iterating over a list and associated theorems.</li>
             <li><a href="html/Instr.html">Instr</a>: semantics of base instructions.</li>
             <li><a href="html/PolyLang.html">PolyLang</a>: semantics of the scheduled polyhedral language.</li>
+            <li><a href="html/PolyLoop.html">PolyLoop</a>: semantics of the intermediate language: AST, but each loop and guards over polyhedra.</li>
             <li><a href="html/Loop.html">Loop</a>: semantics of the loop language.</li>
         </ul>
         <h3>Compilation</h3>
         <ul>
-            <li><a href="html/CodeGen.html">CodeGen</a>: code generation from <a href="hmtl/PolyLang.html">PolyLang</a> to <a href="html/Loop.html">Loop</a>.</li>
+            <li><a href="html/CodeGen.html">CodeGen</a>: code generation from <a href="hmtl/PolyLang.html">PolyLang</a> to <a href="html/PolyLoop.html">PolyLoop</a>.</li>
+            <li><a href="html/LoopGen.html">LoopGen</a>: code generation from <a href="hmtl/PolyLoop.html">PolyLoop</a> to <a href="html/Loop.html">Loop</a>.</li>
         </ul>
     </body>
 </html>
