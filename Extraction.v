@@ -1,7 +1,7 @@
 Require Import CodeGen.
 Require Import PolyLang.
 Require Import Instr.
-Require Import Vpl.ImpureConfig.
+Require Import ImpureAlarmConfig.
 Require Import List.
 Require Import String.
 Require Import Linalg.

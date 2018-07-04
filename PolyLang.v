@@ -125,6 +125,43 @@ Proof.
   - intros to_scan2 Heq. econstructor; eauto. apply IH. intros. autounfold. rewrite Heq. auto.
 Qed.
 
+Lemma poly_lex_semantics_pis_ext_single :
+  forall pis1 pis2 to_scan mem1 mem2,
+    Forall2 (fun pi1 pi2 => pi1.(pi_instr) = pi2.(pi_instr) /\ pi1.(pi_transformation) = pi2.(pi_transformation)) pis1 pis2 ->
+    poly_lex_semantics to_scan pis1 mem1 mem2 -> poly_lex_semantics to_scan pis2 mem1 mem2.
+Proof.
+  intros pis1 pis2 to_scan mem1 mem2 Hsame Hsem.
+  induction Hsem as [to_scan1 prog mem Hdone|to_scan1 prog mem1 mem2 mem3 pi n p Hscanp Heqpi Hts Hsem1 Hsem2 IH].
+  - apply PolyLexDone; auto.
+  - destruct (Forall2_nth_error _ _ _ _ _ _ _ Hsame Heqpi) as [pi2 [Hpi2 [H1 H2]]].
+    eapply PolyLexProgress; [exact Hscanp|exact Hpi2|exact Hts| |apply IH; auto].
+    rewrite H1, H2 in *; auto.
+Qed.
+
+Lemma poly_lex_semantics_pis_ext_iff :
+  forall pis1 pis2 to_scan mem1 mem2,
+    Forall2 (fun pi1 pi2 => pi1.(pi_instr) = pi2.(pi_instr) /\ pi1.(pi_transformation) = pi2.(pi_transformation)) pis1 pis2 ->
+    poly_lex_semantics to_scan pis1 mem1 mem2 <-> poly_lex_semantics to_scan pis2 mem1 mem2.
+Proof.
+  intros pis1 pis2 to_scan mem1 mem2 Hsame.
+  split.
+  - apply poly_lex_semantics_pis_ext_single; auto.
+  - apply poly_lex_semantics_pis_ext_single.
+    eapply Forall2_imp; [|apply Forall2_sym; exact Hsame].
+    intros x y H; simpl in *; destruct H; auto.
+Qed.
+
+Lemma poly_lex_semantics_ext_iff :
+  forall pis to_scan1 to_scan2 mem1 mem2,
+    (forall n p, to_scan1 n p = to_scan2 n p) ->
+    poly_lex_semantics to_scan1 pis mem1 mem2 <-> poly_lex_semantics to_scan2 pis mem1 mem2.
+Proof.
+  intros pis to_scan1 to_scan2 mem1 mem2 Hsame.
+  split; intros H.
+  - eapply poly_lex_semantics_extensionality; [exact H|]. auto.
+  - eapply poly_lex_semantics_extensionality; [exact H|]. auto.
+Qed.
+
 Theorem poly_lex_concat :
   forall to_scan1 prog mem1 mem2,
     poly_lex_semantics to_scan1 prog mem1 mem2 ->

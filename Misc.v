@@ -3,6 +3,7 @@ Require Import List.
 Require Import Bool.
 Require Import Psatz.
 Require Import Setoid.
+Require Import Permutation.
 
 Open Scope Z_scope.
 
@@ -102,6 +103,22 @@ Proof.
     + apply IHn.
 Qed.
 
+Lemma nth_error_nth :
+  forall (A : Type) n (l : list A) d x, nth_error l n = Some x -> nth n l d = x.
+Proof.
+  intros A; induction n.
+  - intros l d x; destruct l; simpl in *; congruence.
+  - intros l d x; destruct l; simpl in *; [congruence | apply IHn].
+Qed.
+
+Lemma nth_error_nth_iff :
+  forall (A : Type) n (l : list A) d x, (n < length l)%nat -> nth_error l n = Some x <-> nth n l d = x.
+Proof.
+  intros A; induction n.
+  - intros l d x Hn; destruct l; simpl in *; [lia | split; congruence].
+  - intros l d x Hn; destruct l; simpl in *; [|apply IHn]; lia.
+Qed.
+
 Lemma nth_skipn :
   forall A n m (l : list A) d, nth n (skipn m l) d = nth (m + n) l d.
 Proof.
@@ -138,6 +155,24 @@ Proof.
     lia.
 Qed.
 
+Lemma combine_map_r :
+  forall (A B C : Type) (f : B -> C) (xs : list A) (ys : list B),
+    combine xs (map f ys) = map (fun u => (fst u, f (snd u))) (combine xs ys).
+Proof.
+  intros A B C f. induction xs.
+  - intros [|y ys]; simpl; auto.
+  - intros [|y ys]; simpl; f_equal; auto.
+Qed.
+
+Lemma map_combine :
+  forall (A B : Type) (xs : list A) (ys : list B),
+    length xs = length ys -> map fst (combine xs ys) = xs.
+Proof.
+  intros A B. induction xs.
+  - intros [|y ys] H; simpl in *; auto.
+  - intros [|y ys] H; simpl in *; [|rewrite IHxs]; congruence.
+Qed.
+
 Fixpoint flatten {A : Type} (l : list (list A)) :=
   match l with
   | nil => nil
@@ -163,6 +198,78 @@ Proof.
     + intros [H | H]; [exists a; auto|]. rewrite IHl in H; destruct H as [u Hu]; exists u; tauto.
     + intros [u [Hxu [Hau | Hul]]]; [left; congruence|]. right; rewrite IHl; exists u; tauto.
 Qed.
+
+Lemma flatten_map :
+  forall (A B : Type) (f : A -> B) l, map f (flatten l) = flatten (map (map f) l).
+Proof.
+  intros A B f. induction l; simpl; auto.
+  rewrite map_app, IHl; reflexivity.
+Qed.
+
+(** * Results on [Forall2] *)
+
+Lemma Forall2_nth_error :
+  forall (A B : Type) (R : A -> B -> Prop) n xs ys x, Forall2 R xs ys -> nth_error xs n = Some x -> exists y, nth_error ys n = Some y /\ R x y.
+Proof.
+  intros A B R. induction n.
+  - intros xs ys x Hforall Hnth; destruct Hforall; simpl in *; [|exists y; split]; try congruence.
+  - intros xs ys x Hforall Hnth; destruct Hforall; simpl in *; [congruence|].
+    eapply IHn; eauto.
+Qed.
+
+Lemma Forall2_sym :
+  forall (A B : Type) (R : A -> B -> Prop) xs ys, Forall2 R xs ys -> Forall2 (fun y x => R x y) ys xs.
+Proof.
+  intros A B R xs ys Hforall. induction Hforall; constructor; auto.
+Qed.
+
+Lemma Forall2_imp :
+  forall (A B : Type) (R R' : A -> B -> Prop) xs ys, (forall x y, R x y -> R' x y) -> Forall2 R xs ys -> Forall2 R' xs ys.
+Proof.
+  intros A B R R' xs ys H Hforall. induction Hforall; constructor; auto.
+Qed.
+
+Lemma Forall2_sym_iff :
+  forall (A B : Type) (R : A -> B -> Prop) xs ys, Forall2 R xs ys <-> Forall2 (fun y x => R x y) ys xs.
+Proof.
+  intros A B R xs ys. split.
+  - apply Forall2_sym.
+  - intros H; apply Forall2_sym in H. eapply Forall2_imp; eauto.
+Qed.
+
+Lemma Forall2_map_left :
+  forall (A B C : Type) (R : B -> C -> Prop) (f : A -> B) xs ys, Forall2 R (map f xs) ys <-> Forall2 (fun x y => R (f x) y) xs ys.
+Proof.
+  intros A B C R f xs ys. split.
+  - intros H. remember (map f xs) as zs; generalize xs Heqzs; clear xs Heqzs. induction H.
+    + intros xs; destruct xs; simpl in *; intros; [constructor|congruence].
+    + intros xs; destruct xs; simpl in *; [congruence|].
+      intros; constructor; [|apply IHForall2]; congruence.
+  - intros H; induction H; simpl in *; econstructor; auto.
+Qed.
+
+Lemma Forall2_map_right :
+  forall (A B C : Type) (R : A -> C -> Prop) (f : B -> C) xs ys, Forall2 R xs (map f ys) <-> Forall2 (fun x y => R x (f y)) xs ys.
+Proof.
+  intros A B C R f xs ys.
+  rewrite Forall2_sym_iff, Forall2_map_left, Forall2_sym_iff.
+  reflexivity.
+Qed.
+
+Lemma Forall2_R_refl :
+  forall (A : Type) (R : A -> A -> Prop) xs, (forall x, R x x) -> Forall2 R xs xs.
+Proof.
+  intros A R; induction xs.
+  - intros; constructor.
+  - intros; constructor; auto.
+Qed.
+
+Lemma Forall2_length :
+  forall (A B : Type) (R : A -> B -> Prop) (xs : list A) (ys : list B), Forall2 R xs ys -> length xs = length ys.
+Proof.
+  intros A B R xs ys H. induction H; simpl; auto.
+Qed.
+
 
 (** * Tactics for rewriting under binders *)
 
@@ -351,6 +458,28 @@ Proof.
       destruct (m - n)%nat as [|u] eqn:Hmn; simpl.
       * replace m with n by lia. intuition (congruence || lia).
       * destruct u; simpl; intuition (congruence || lia).
+Qed.
+
+Lemma combine_n_range_in :
+  forall (A : Type) (k : nat) (l : list A) (x : A),
+    In (x, k) (combine l (n_range (length l))) <-> nth_error l k = Some x.
+Proof.
+  intros A. induction k.
+  - intros [|y l] x.
+    + simpl. split; intros; [tauto | congruence].
+    + replace (length (y :: l)) with (S (length l)) by reflexivity.
+      rewrite n_range_begin. simpl.
+      split; [|intros; left; congruence].
+      intros [H | H]; [congruence|]. exfalso.
+      apply in_combine_r in H. rewrite in_map_iff in H. destruct H as [? [? _]]; congruence.
+  - intros [|y l] x.
+    + simpl. split; intros; [tauto | congruence].
+    + replace (length (y :: l)) with (S (length l)) by reflexivity.
+      rewrite n_range_begin. simpl.
+      rewrite <- IHk, combine_map_r, in_map_iff. split.
+      * intros [H | [[x1 k1] [Hxk Hin]]]; [congruence|].
+        simpl in *. congruence.
+      * intros H; right; exists (x, k); auto.
 Qed.
 
 Definition Zrange lb ub := map (fun n => lb + Z.of_nat n) (n_range (Z.to_nat (ub - lb))).
@@ -668,3 +797,75 @@ Proof.
     + rewrite Ha. apply divide_lcm_l.
     + eapply divide_trans; [apply IHl; auto|apply divide_lcm_r].
 Qed.
+
+(** * Decidability of [Permutation] *)
+
+Section PermutationDec.
+  Variable A : Type.
+  Variable dec : forall (x y : A), {x = y} + {x <> y}.
+
+  Fixpoint removeone (a : A) (l : list A) : option (list A) :=
+    match l with
+    | nil => None
+    | b :: l => if dec b a then Some l else match removeone a l with None => None | Some l1 => Some (b :: l1) end
+    end.
+
+  Lemma removeone_In :
+    forall a l, In a l -> exists l1 l2, removeone a l = Some (l1 ++ l2) /\ l = l1 ++ (a :: l2).
+  Proof.
+    induction l as [|b l IHl].
+    - intros; simpl in *; tauto.
+    - intros; simpl in *. destruct dec; [exists nil; exists l; simpl; split; f_equal; auto|].
+      destruct IHl as [l1 [l2 [H1 H2]]]; [destruct H; congruence|].
+      exists (b :: l1); exists l2; rewrite H1, H2. simpl; auto.
+  Qed.
+
+  Lemma removeone_notIn :
+    forall a l, ~(In a l) -> removeone a l = None.
+  Proof.
+    induction l as [|b l IHl].
+    - intros; simpl in *; auto.
+    - intros; simpl in *; rewrite IHl; auto.
+      destruct dec; intuition.
+  Qed.
+
+  Lemma removeone_None :
+    forall a l, removeone a l = None -> ~(In a l).
+  Proof.
+    intros a l H1 H2; apply removeone_In in H2.
+    destruct H2 as [? [? [? ?]]]; congruence.
+  Qed.
+
+  Lemma removeone_Some :
+    forall a l1 l2, removeone a l1 = Some l2 -> exists l3 l4, l2 = l3 ++ l4 /\ l1 = l3 ++ (a :: l4).
+  Proof.
+    intros a l1 l2 H.
+    destruct (In_dec dec a l1) as [Hin | Hin]; [apply removeone_In in Hin|apply removeone_notIn in Hin; congruence].
+    destruct Hin as [l3 [l4 [H1 H2]]]; exists l3; exists l4; split; congruence.
+  Qed.
+
+  Lemma removeone_Permutation :
+    forall a l1 l2, removeone a l1 = Some l2 -> Permutation (a :: l2) l1.
+  Proof.
+    intros a l1 l2 H.
+    destruct (removeone_Some a l1 l2 H) as [l3 [l4 [-> ->]]].
+    apply Permutation_cons_app; reflexivity.
+  Qed.
+
+  Lemma Permutation_dec : forall (l1 l2 : list A), {Permutation l1 l2} + {~(Permutation l1 l2)}.
+  Proof.
+    induction l1 as [|x l1 IH].
+    - intros [|x l2].
+      + left; auto.
+      + right; apply Permutation_nil_cons.
+    - intros l2.
+      destruct (removeone x l2) as [l3|] eqn:Hrem.
+      + apply removeone_Permutation in Hrem.
+        destruct (IH l3) as [Hperm | Hperm].
+        * left. rewrite <- Hrem. apply Permutation_cons; auto.
+        * right. rewrite <- Hrem. intros H; apply Hperm. eapply Permutation_cons_inv; eauto.
+      + right. apply removeone_None in Hrem.
+        intros H; apply Hrem. eapply Permutation_in; [exact H|]. simpl; auto.
+  Defined.
+
+End PermutationDec.

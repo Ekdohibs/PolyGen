@@ -1,9 +1,8 @@
 open Conversions
 open PolyLang
+open PolyLoop
 open Loop
 open ImpureConfig
-open Extraction
-open CodeGen
 
 let letter_of_int n =
   assert (n < 26);
@@ -121,7 +120,13 @@ let process_pi (((env_size, scan_dimensions), name), pi) =
   if ok then
     Format.printf "Generated code:@.%a@.@." (print_loop env_size "") gen
   else
-    Format.printf "Generation failed.@.@."
+    Format.printf "Generation failed.@.@.";
+  let (gen, ok) = CodeGen.complete_generate_many scand totald [pi_lex] in
+  if ok then
+    Format.printf "Generated code (many polys):@.%a@.@." (print_loop env_size "") gen
+  else
+    Format.printf "Generation failed (many polys).@.@."
+
 
 
 let () = List.iter process_pi Extraction.test_pis

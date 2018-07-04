@@ -165,6 +165,34 @@ Proof.
   rewrite <- is_eq_veq in *. simpl. rewrite Hx. rewrite Z.eqb_refl. auto.
 Qed.
 
+Lemma vector_nth_null :
+  forall v, (forall n, nth n v 0 = 0) -> is_null v = true.
+Proof.
+  induction v.
+  - intros; simpl; auto.
+  - intros H; simpl; reflect; split.
+    + exact (H 0%nat).
+    + apply IHv; intros n; exact (H (S n)).
+Qed.
+
+Lemma vector_nth_eq :
+  forall v1 v2, (forall n, nth n v1 0 = nth n v2 0) -> is_eq v1 v2 = true.
+Proof.
+  induction v1.
+  - intros v2 H; simpl; destruct v2; try reflexivity; apply vector_nth_null.
+    intros n; rewrite <- H; auto. destruct n; auto.
+  - intros v2 H; destruct v2; simpl; rewrite andb_true_iff.
+    + split; [reflect; exact (H 0%nat)|apply vector_nth_null; intros n; exact (H (S n))].
+    + split; [reflect; exact (H 0%nat)|apply IHv1; intros n; exact (H (S n))].
+Qed.
+
+Lemma vector_nth_veq :
+  forall v1 v2, (forall n, nth n v1 0 = nth n v2 0) -> v1 =v= v2.
+Proof.
+  intros v1 v2 H.
+  rewrite <- is_eq_veq. apply vector_nth_eq; auto.
+Qed.
+
 Lemma is_eq_app :
   forall l1 l2 l3 l4, length l1 = length l3 -> is_eq (l1 ++ l2) (l3 ++ l4) = is_eq l1 l3 && is_eq l2 l4.
 Proof.
@@ -490,6 +518,16 @@ Proof.
   nia.
 Qed.
 
+(** * Constraint negation *)
+Definition neg_constraint c :=
+  (mult_vector (-1) (fst c), -snd c - 1).
+Lemma neg_constraint_correct :
+  forall p c, satisfies_constraint p (neg_constraint c) = negb (satisfies_constraint p c).
+Proof.
+  intros p c. unfold satisfies_constraint.
+  apply eq_iff_eq_true. reflect. unfold neg_constraint.
+  simpl. rewrite dot_product_mult_right. lia.
+Qed.
 
 
 (** * Adding two vectors *)
@@ -946,6 +984,13 @@ Proof.
       replace (S k <? S n)%nat with (k <? n)%nat by (rewrite eq_iff_eq_true; reflect; lia); rewrite IHn; destruct k; reflexivity.
 Qed.
 
+Lemma resize_1 :
+  forall v, resize 1 v = nth 0 v 0 :: nil.
+Proof.
+  intros v; destruct v; auto.
+Qed.
+
+
 (** * Alternative formulation of previous results that used [++] on both sides *)
 
 Lemma dot_product_app_left :
@@ -1034,6 +1079,24 @@ Proof.
   induction n.
   - intros; simpl in *; auto.
   - intros; destruct v; simpl in *; auto.
+Qed.
+
+Lemma lex_app_not_gt :
+  forall env x1 x2 l1 l2, lex_compare ((env ++ (x1 :: nil)) ++ l1) ((env ++ (x2 :: nil)) ++ l2) <> Gt -> x1 <= x2.
+Proof.
+  intros env x1 x2 l1 l2 H.
+  rewrite !lex_compare_app, lex_compare_reflexive in H by (rewrite ?app_length; reflexivity).
+  simpl in H. destruct (x1 ?= x2) eqn:H12; simpl; congruence.
+Qed.
+
+Lemma lex_compare_lt_head :
+  forall v1 v2, lex_compare v1 v2 = Lt -> nth 0 v1 0 <= nth 0 v2 0.
+Proof.
+  intros v1 v2 H.
+  rewrite <- resize_skipn_eq with (d := 1%nat) (l := v1) in H.
+  rewrite <- resize_skipn_eq with (d := 1%nat) (l := v2) in H.
+  rewrite !resize_1 in H.
+  simpl in H. destruct (nth 0 v1 0 ?= nth 0 v2 0) eqn:Hcmp; congruence.
 Qed.
 
 
@@ -1232,6 +1295,8 @@ Proof.
     rewrite eq_iff_eq_true; reflect; nia.
 Qed.
 
+(** * Size at which a polyhedron can be truncated without change *)
+
 Definition poly_nrl (pol : polyhedron) := list_max (map (fun c => nrlength (fst c)) pol).
 
 Lemma in_poly_nrlength :
@@ -1261,3 +1326,64 @@ Proof.
   - intros H c Hin. symmetry; rewrite nrlength_def. apply H.
     rewrite in_map_iff; exists c; auto.
 Qed.
+
+(** * Whether a variable is absent in a given polyhedron *)
+Definition absent_var (p : polyhedron) k :=
+  forall c, In c p -> nth k (fst c) 0 = 0.
+
+Lemma has_var_poly_nrl :
+  forall n p, (poly_nrl p <= n)%nat <-> (forall k, (n <= k)%nat -> absent_var p k).
+Proof.
+  intros n p.
+  rewrite <- poly_nrl_def. split.
+  - intros H k Hnk c Hc.
+    specialize (H c Hc).
+    erewrite nth_eq; [|exact H].
+    rewrite nth_overflow; [reflexivity|].
+    rewrite resize_length; auto.
+  - intros H c Hc.
+    apply vector_nth_veq; intros k.
+    rewrite nth_resize.
+    destruct (k <? n)%nat eqn:Hnk; reflect; [reflexivity|].
+    rewrite H; auto.
+Qed.
+
+Lemma absent_var_cons :
+  forall k c p, nth k (fst c) 0 = 0 -> absent_var p k -> absent_var (c :: p) k.
+Proof.
+  intros k c p H1 H2 c1 [-> | Hc1]; auto.
+Qed.
+
+Lemma absent_var_head :
+  forall k c p, absent_var (c :: p) k -> nth k (fst c) 0 = 0.
+Proof.
+  intros k c p H; apply H; simpl; auto.
+Qed.
+
+Lemma absent_var_tail :
+  forall k c p, absent_var (c :: p) k -> absent_var p k.
+Proof.
+  intros k c p H c1 Hc1; apply H; simpl; auto.
+Qed.
+
+
+(** * Applying [resize] on all constraints of a polyhedron. *)
+
+Definition resize_poly n (p : polyhedron) := map (fun c => (resize n (fst c), snd c)) p.
+Lemma resize_poly_in :
+  forall p pol n, length p = n -> in_poly p (resize_poly n pol) = in_poly p pol.
+Proof.
+  intros p pol n H; unfold in_poly, resize_poly.
+  rewrite forallb_map. apply forallb_ext.
+  intros c; unfold satisfies_constraint; f_equal. simpl.
+  rewrite <- H, dot_product_resize_right. reflexivity.
+Qed.
+
+Lemma resize_poly_nrl :
+  forall pol n, (poly_nrl (resize_poly n pol) <= n)%nat.
+Proof.
+  intros pol n. unfold poly_nrl, resize_poly. rewrite map_map. apply list_le_max.
+  intros k Hk. rewrite in_map_iff in Hk; destruct Hk as [c [Hc ?]]. simpl in Hc.
+  rewrite <- Hc, <- nrlength_def. rewrite resize_resize; auto. reflexivity.
+Qed.
+

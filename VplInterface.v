@@ -480,34 +480,6 @@ Proof.
   rewrite <- vector_to_LinQ_correct. rewrite <- LinQ_vector_LinQ. rewrite LinQ.Mul_correct. reflexivity.
 Qed.
 
-Lemma vector_nth_null :
-  forall v, (forall n, nth n v 0 = 0) -> is_null v = true.
-Proof.
-  induction v.
-  - intros; simpl; auto.
-  - intros H; simpl; reflect; split.
-    + exact (H 0%nat).
-    + apply IHv; intros n; exact (H (S n)).
-Qed.
-
-Lemma vector_nth_eq :
-  forall v1 v2, (forall n, nth n v1 0 = nth n v2 0) -> is_eq v1 v2 = true.
-Proof.
-  induction v1.
-  - intros v2 H; simpl; destruct v2; try reflexivity; apply vector_nth_null.
-    intros n; rewrite <- H; auto. destruct n; auto.
-  - intros v2 H; destruct v2; simpl; rewrite andb_true_iff.
-    + split; [reflect; exact (H 0%nat)|apply vector_nth_null; intros n; exact (H (S n))].
-    + split; [reflect; exact (H 0%nat)|apply IHv1; intros n; exact (H (S n))].
-Qed.
-
-Lemma vector_nth_veq :
-  forall v1 v2, (forall n, nth n v1 0 = nth n v2 0) -> v1 =v= v2.
-Proof.
-  intros v1 v2 H.
-  rewrite <- is_eq_veq. apply vector_nth_eq; auto.
-Qed.
-
 Lemma vector_LinQ_vector :
   forall l, mult_vector (fst (LinQ_to_vector (vector_to_LinQ l))) l =v= snd (LinQ_to_vector (vector_to_LinQ l)).
 Proof.
