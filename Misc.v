@@ -482,6 +482,16 @@ Proof.
       * intros H; right; exists (x, k); auto.
 Qed.
 
+Lemma n_range_NoDup :
+  forall n, NoDup (n_range n).
+Proof.
+  induction n.
+  - constructor.
+  - simpl. rewrite NoDup_Add; [|apply Add_app].
+    rewrite app_nil_r. split; [auto|].
+    rewrite n_range_in. lia.
+Qed.
+
 Definition Zrange lb ub := map (fun n => lb + Z.of_nat n) (n_range (Z.to_nat (ub - lb))).
 
 Lemma Zrange_empty :

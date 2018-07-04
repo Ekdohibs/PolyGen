@@ -125,15 +125,6 @@ Global Opaque project.
 
 (** * Generating the code *)
 
-Fixpoint sequence {A : Type} (l : list (imp A)) : imp (list A) :=
-  match l with
-  | nil => pure nil
-  | x :: l => BIND y <- x -; BIND l1 <- sequence l -; pure (y :: l1)
-  end.
-
-Definition fmap {A B : Type} (f : A -> B) (x : imp A) : imp B :=
-  BIND y <- x -; pure (f y).
-
 Fixpoint generate_loop (d : nat) (n : nat) (pi : Polyhedral_Instruction) : imp poly_stmt :=
   match d with
   | O => pure (PInstr pi.(pi_instr) (map (fun t => (1%positive, t)) pi.(pi_transformation)))
@@ -386,196 +377,6 @@ Proof.
   - intros; split; simpl; intros H; inversion_clear H; econstructor; eauto; rewrite IHl in *; eauto.
 Qed.
 
-(* Workaround a bug of Coq; see https://github.com/coq/coq/issues/7875 *)
-Fixpoint mymap {A B : Type} (f : A -> B) (l : list A) : list B :=
-  match l with
-  | nil => nil
-  | x :: l => f x :: mymap f l
-  end.
-
-Definition mapM {A B : Type} (f : A -> imp B) (l : list A) : imp (list B) := sequence (mymap f l).
-
-Lemma Forall2_mymap_left :
-  forall (A B C : Type) (R : B -> C -> Prop) (f : A -> B) xs ys, Forall2 R (mymap f xs) ys <-> Forall2 (fun x y => R (f x) y) xs ys.
-Proof.
-  intros A B C R f xs ys. split.
-  - intros H. remember (mymap f xs) as zs; generalize xs Heqzs; clear xs Heqzs. induction H.
-    + intros xs; destruct xs; simpl in *; intros; [constructor|congruence].
-    + intros xs; destruct xs; simpl in *; [congruence|].
-      intros; constructor; [|apply IHForall2]; congruence.
-  - intros H; induction H; simpl in *; econstructor; auto.
-Qed.
-
-Lemma Forall2_mymap_right :
-  forall (A B C : Type) (R : A -> C -> Prop) (f : B -> C) xs ys, Forall2 R xs (mymap f ys) <-> Forall2 (fun x y => R x (f y)) xs ys.
-Proof.
-  intros A B C R f xs ys.
-  rewrite Forall2_sym_iff, Forall2_mymap_left, Forall2_sym_iff.
-  reflexivity.
-Qed.
-
-Lemma sequence_mayReturn :
-  forall (A : Type) (xs : list (imp A)) (ys : list A),
-    mayReturn (sequence xs) ys -> Forall2 mayReturn xs ys.
-Proof.
-  intros A. induction xs.
-  - intros ys Hys; simpl in *. apply mayReturn_pure in Hys; rewrite <- Hys.
-    constructor.
-  - intros ys Hys; simpl in *.
-    bind_imp_destruct Hys y Hy.
-    bind_imp_destruct Hys ys1 Hys1.
-    apply mayReturn_pure in Hys; rewrite <- Hys in *.
-    constructor; auto.
-Qed.
-
-Lemma mapM_mayReturn :
-  forall (A B : Type) (f : A -> imp B) (xs : list A) (ys : list B),
-    mayReturn (mapM f xs) ys -> Forall2 (fun x y => mayReturn (f x) y) xs ys.
-Proof.
-  intros A B f xs ys H.
-  apply sequence_mayReturn in H. rewrite Forall2_mymap_left in H.
-  exact H.
-Qed.
-
-Lemma sequence_length :
-  forall (A : Type) (xs : list (imp A)) (ys : list A), mayReturn (sequence xs) ys -> length xs = length ys.
-Proof.
-  intros A xs ys H; apply sequence_mayReturn, Forall2_length in H. auto.
-Qed.
-
-Lemma mymap_length :
-  forall (A B : Type) (f : A -> B) xs, length (mymap f xs) = length xs.
-Proof.
-  induction xs; simpl in *; auto.
-Qed.
-
-Lemma mapM_length :
-  forall (A B : Type) (f : A -> imp B) xs ys, mayReturn (mapM f xs) ys -> length xs = length ys.
-Proof.
-  intros A B f xs ys H; apply sequence_length in H; rewrite mymap_length in H; auto.
-Qed.
-
-Lemma mapM_in_iff :
-  forall (A B : Type) (f : A -> imp B) (xs : list A) (y : B),
-    WHEN ys <- mapM f xs THEN In y ys -> exists x, mayReturn (f x) y /\ In x xs.
-Proof.
-  intros A B f. unfold mapM. induction xs.
-  - intros y ys Hys Hin. simpl in *. apply mayReturn_pure in Hys.
-    rewrite <- Hys in Hin. simpl in *; tauto.
-  - intros y ys Hys Hin. simpl in *.
-    bind_imp_destruct Hys y1 Hy1; bind_imp_destruct Hys ys1 Hys1.
-    apply mayReturn_pure in Hys; rewrite <- Hys in Hin.
-    simpl in *.
-    destruct Hin as [Hin | Hin].
-    + exists a; intuition congruence.
-    + specialize (IHxs y ys1 Hys1 Hin). firstorder.
-Qed.
-
-Lemma mapM_nth_error1 :
-  forall (A B : Type) (f : A -> imp B) (k : nat) (xs : list A) (y : B),
-    WHEN ys <- mapM f xs THEN nth_error ys k = Some y -> exists x, mayReturn (f x) y /\ nth_error xs k = Some x.
-Proof.
-  intros A B f k. unfold mapM. induction k.
-  - intros xs y [|y1 ys] Hys Hnth; simpl in *; [congruence|].
-    destruct xs as [|x xs]; simpl in *; [apply mayReturn_pure in Hys; congruence|].
-    bind_imp_destruct Hys y2 Hy2; bind_imp_destruct Hys ys2 Hys2.
-    apply mayReturn_pure in Hys.
-    exists x; split; congruence.
-  - intros xs y [|y1 ys] Hys Hnth; simpl in *; [congruence|].
-    destruct xs as [|x xs]; simpl in *; [apply mayReturn_pure in Hys; congruence|].
-    bind_imp_destruct Hys y2 Hy2; bind_imp_destruct Hys ys2 Hys2.
-    apply mayReturn_pure in Hys.
-    replace ys2 with ys in * by congruence.
-    apply (IHk _ _ _ Hys2 Hnth).
-Qed.
-
-Lemma mapM_nth_error2 :
-  forall (A B : Type) (f : A -> imp B) (k : nat) (xs : list A) (x : A),
-    nth_error xs k = Some x -> WHEN ys <- mapM f xs THEN exists y, mayReturn (f x) y /\ nth_error ys k = Some y.
-Proof.
-  intros A B f k. unfold mapM. induction k.
-  - intros [|x xs] x1 Hnth ys Hys; simpl in *; [congruence|].
-    bind_imp_destruct Hys y1 Hy1; bind_imp_destruct Hys ys1 Hys1.
-    apply mayReturn_pure in Hys; rewrite <- Hys in *.
-    exists y1; split; congruence.
-  - intros [|x xs] x1 Hnth ys Hys; simpl in *; [congruence|].
-    bind_imp_destruct Hys y1 Hy1; bind_imp_destruct Hys ys1 Hys1.
-    apply mayReturn_pure in Hys; rewrite <- Hys in *.
-    apply (IHk _ _ Hnth _ Hys1).
-Qed.
-
-Lemma iter_semantics_mapl :
-  forall (A B : Type) P (f : A -> B) (l : list A) mem1 mem2,
-    iter_semantics P (map f l) mem1 mem2 <-> iter_semantics (fun x => P (f x)) l mem1 mem2.
-Proof.
-  intros A B P f. induction l.
-  - intros; split; simpl; intros H; inversion_clear H; constructor.
-  - intros; split; simpl; intros H; inversion_clear H; econstructor; eauto; rewrite IHl in *; auto.
-Qed.
-
-(* Unfortunate needed copy (Coq bug workaround) *)
-Lemma iter_semantics_mymapl :
-  forall (A B : Type) P (f : A -> B) (l : list A) mem1 mem2,
-    iter_semantics P (mymap f l) mem1 mem2 <-> iter_semantics (fun x => P (f x)) l mem1 mem2.
-Proof.
-  intros A B P f. induction l.
-  - intros; split; simpl; intros H; inversion_clear H; constructor.
-  - intros; split; simpl; intros H; inversion_clear H; econstructor; eauto; rewrite IHl in *; auto.
-Qed.
-
-Lemma iter_semantics_combine :
-  forall (A B : Type) P (xs : list A) (ys : list B) mem1 mem2,
-    length xs = length ys -> iter_semantics P xs mem1 mem2 <-> iter_semantics (fun p => P (fst p)) (combine xs ys) mem1 mem2.
-Proof.
-  intros A B P xs ys mem1 mem2 H.
-  replace xs with (map fst (combine xs ys)) at 1 by (apply map_combine; auto).
-  rewrite iter_semantics_mapl; reflexivity.
-Qed.
-
-Lemma iter_semantics_sequence :
-  forall (A : Type) P (xs : list (imp A)) (ys : list A) mem1 mem2,
-    mayReturn (sequence xs) ys ->
-    iter_semantics (fun x mem3 mem4 => WHEN y <- x THEN P y mem3 mem4) xs mem1 mem2 -> iter_semantics P ys mem1 mem2.
-Proof.
-  intros A P. induction xs.
-  - intros ys mem1 mem2 Hys Hsem; simpl in *. apply mayReturn_pure in Hys; rewrite <- Hys.
-    inversion_clear Hsem; constructor.
-  - intros ys mem1 mem2 Hys Hsem; simpl in *.
-    bind_imp_destruct Hys y Hy.
-    bind_imp_destruct Hys ys1 Hys1.
-    apply mayReturn_pure in Hys; rewrite <- Hys in *.
-    inversion_clear Hsem. 
-    econstructor; [apply H; auto|].
-    apply IHxs; auto.
-Qed.
-
-Lemma iter_semantics_mapM :
-  forall (A B : Type) f P (xs : list A) (ys : list B) mem1 mem2,
-    mayReturn (mapM f xs) ys ->
-    iter_semantics (fun x mem3 mem4 => WHEN y <- f x THEN P y mem3 mem4) xs mem1 mem2 -> iter_semantics P ys mem1 mem2.
-Proof.
-  intros A B f P xs ys mem1 mem2 Hmap Hsem.
-  eapply iter_semantics_sequence; [exact Hmap|].
-  rewrite iter_semantics_mymapl. auto.
-Qed.
-
-Lemma iter_semantics_mapM_rev :
-  forall (A B : Type) P f (xs : list A) (ys : list B) mem1 mem2,
-    mayReturn (mapM f xs) ys ->
-    iter_semantics P ys mem1 mem2 ->
-    iter_semantics (fun '(x, y) mem3 mem4 => mayReturn (f x) y /\ P y mem3 mem4) (combine xs ys) mem1 mem2.
-Proof.
-  intros A B P f. induction xs.
-  - intros ys mem1 mem2 Hys Hsem; simpl in *. apply mayReturn_pure in Hys; rewrite <- Hys in Hsem.
-    inversion_clear Hsem; constructor.
-  - intros ys mem1 mem2 Hys Hsem; simpl in *.
-    bind_imp_destruct Hys y Hy.
-    bind_imp_destruct Hys ys1 Hys1.
-    apply mayReturn_pure in Hys; rewrite <- Hys in *.
-    inversion_clear Hsem.
-    econstructor; [eauto|].
-    apply IHxs; auto.
-Qed.
 
 Definition update_poly pi pol :=
   {| pi_instr := pi.(pi_instr) ; pi_poly := pol ; pi_schedule := pi.(pi_schedule) ; pi_transformation := pi.(pi_transformation) |}.
@@ -684,67 +485,6 @@ Proof.
   intros p1 p2 n Hp1 Hp2 pl Hpl p Hp.
   rewrite has_var_poly_nrl in *.
   intros k Hk; eapply poly_difference_no_new_var; [| |exact Hpl|]; eauto.
-Qed.
-
-Definition all_disjoint pl := forall p k1 k2 pol1 pol2, nth_error pl k1 = Some pol1 -> nth_error pl k2 = Some pol2 ->
-                                                   in_poly p pol1 = true -> in_poly p pol2 = true -> k1 = k2.
-
-Lemma all_disjoint_nil :
-  all_disjoint nil.
-Proof.
-  intros p [|k1] [|k2] ? ? ? ? ? ?; simpl in *; congruence.
-Qed.
-
-Lemma all_disjoint_cons :
-  forall pol pl, all_disjoint pl -> (forall p pol1, In pol1 pl -> in_poly p pol = true -> in_poly p pol1 = true -> False) -> all_disjoint (pol :: pl).
-Proof.
-  intros pol pl Hdisj H p k1 k2 pol1 pol2 Hk1 Hk2 Hpol1 Hpol2.
-  destruct k1 as [|k1]; destruct k2 as [|k2]; [auto| | |erewrite (Hdisj p k1 k2); eauto]; simpl in *; exfalso;
-    [apply nth_error_In in Hk2|apply nth_error_In in Hk1]; eapply (H p); try congruence; eauto.
-Qed.
-
-Lemma all_disjoint_cons_rev :
-  forall pol pl, all_disjoint (pol :: pl) -> all_disjoint pl /\ (forall p pol1, In pol1 pl -> in_poly p pol = true -> in_poly p pol1 = true -> False).
-Proof.
-  intros pol pl Hdisj.
-  split.
-  - intros p k1 k2 ? ? ? ? ? ?. assert (S k1 = S k2) by (eapply (Hdisj p (S k1) (S k2)); eauto). congruence.
-  - intros p pol1 Hin H1 H2.
-    apply In_nth_error in Hin. destruct Hin as [k Hk].
-    specialize (Hdisj p 0%nat (S k) pol pol1).
-    enough (0%nat = S k) by congruence.
-    apply Hdisj; auto.
-Qed.
-
-Lemma all_disjoint_app :
-  forall pl1 pl2, all_disjoint pl1 -> all_disjoint pl2 -> (forall p pol1 pol2, In pol1 pl1 -> In pol2 pl2 -> in_poly p pol1 = true -> in_poly p pol2 = true -> False) ->
-             all_disjoint (pl1 ++ pl2).
-Proof.
-  induction pl1.
-  - intros; simpl; auto.
-  - intros pl2 H1 H2 H. simpl.
-    apply all_disjoint_cons_rev in H1. simpl in H.
-    apply all_disjoint_cons; [apply IHpl1; try tauto|].
-    + intros; eapply H; eauto.
-    + intros p pol1 Hin. rewrite in_app_iff in Hin; destruct Hin; [|eapply H; eauto].
-      destruct H1 as [_ H1]; eapply H1; eauto.
-Qed.
-
-Lemma all_disjoint_flatten :
-  forall pll, (forall l1, In l1 pll -> all_disjoint l1) ->
-         (forall p k1 k2 l1 l2 pol1 pol2, nth_error pll k1 = Some l1 -> nth_error pll k2 = Some l2 -> In pol1 l1 -> In pol2 l2 ->
-                                     in_poly p pol1 = true -> in_poly p pol2 = true -> k1 = k2) -> all_disjoint (flatten pll).
-Proof.
-  induction pll.
-  - intros; apply all_disjoint_nil.
-  - intros Hdisj Hdisj2. simpl.
-    apply all_disjoint_app; [apply Hdisj; simpl; auto|apply IHpll|].
-    + intros; apply Hdisj; simpl; auto.
-    + intros p k1 k2 ? ? ? ? ? ? ? ? ? ?. enough (S k1 = S k2) by congruence. eapply Hdisj2; simpl in *; eauto.
-    + intros p pol1 pol2 Ha Hfl Hin1 Hin2.
-      rewrite flatten_In in Hfl. destruct Hfl as [u [Hinu Huin]].
-      apply In_nth_error in Huin. destruct Huin as [k Hk].
-      enough (0%nat = S k) by congruence. eapply Hdisj2; simpl in *; eauto.
 Qed.
 
 Lemma poly_difference_disjoint :
@@ -1014,20 +754,6 @@ Proof.
   eapply (split_polys_rec_nrl pols 0%nat); eauto.
 Qed.
 
-Lemma all_disjoint_map_filter :
-  forall (A : Type) (f : A -> polyhedron) (P : A -> bool) (l : list A), all_disjoint (map f l) -> all_disjoint (map f (filter P l)).
-Proof.
-  intros A f P. induction l.
-  - intros H; simpl in *; auto.
-  - intros H; simpl in *.
-    apply all_disjoint_cons_rev in H. destruct H as [H1 H2].
-    destruct (P a).
-    + simpl. apply all_disjoint_cons; [auto|].
-      intros p pol1 H3 H4 H5; eapply H2; eauto.
-      rewrite in_map_iff; rewrite in_map_iff in H3. destruct H3 as [x H3]; exists x; rewrite filter_In in H3; tauto.
-    + auto.
-Qed.
-
 Lemma split_polys_disjoint :
   forall pols, WHEN out <- split_polys pols THEN all_disjoint (map fst out).
 Proof.
@@ -1129,16 +855,6 @@ Proof.
     eapply split_polys_nrl in Ht; eauto.
   - eapply nth_overflow in Ht; rewrite Hppl in Ht.
     rewrite Ht. unfold poly_nrl; simpl. lia.
-Qed.
-
-Lemma n_range_NoDup :
-  forall n, NoDup (n_range n).
-Proof.
-  induction n.
-  - constructor.
-  - simpl. rewrite NoDup_Add; [|apply Add_app].
-    rewrite app_nil_r. split; [auto|].
-    rewrite n_range_in. lia.
 Qed.
 
 Lemma split_and_sort_disjoint :

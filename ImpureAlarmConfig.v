@@ -1,17 +1,20 @@
 Require Import Result.
-Require Import Vpl.Impure.
+Require Import Vpl.Impure Vpl.Debugging.
+Require Import ImpureOperations.
+Require Import Semantics.
+
 Require Vpl.ImpureConfig.
 
 Module CoreAlarmed := AlarmImpureMonad Vpl.ImpureConfig.Core.
 Export CoreAlarmed.
 
-Ltac bind_imp_destruct H id1 id2 :=
-  apply CoreAlarmed.Base.mayReturn_bind in H; destruct H as [id1 [id2 H]].
+Module Export ImpOps := ImpureOps CoreAlarmed.
+Module Export IIS := IterImpureSemantics CoreAlarmed.
 
 Definition res_to_alarm {A : Type} (d : A) (x : result A) : imp A :=
   match x with
   | Ok a => pure a
-  | Err s => alarm s d
+  | Err s => alarm s (failwith INTERN s d)
   end.
 
 Lemma res_to_alarm_correct :

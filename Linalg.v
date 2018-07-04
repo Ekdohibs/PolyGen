@@ -1387,3 +1387,81 @@ Proof.
   rewrite <- Hc, <- nrlength_def. rewrite resize_resize; auto. reflexivity.
 Qed.
 
+(** * Predicate testing whether all polyhedra in a list are disjoint *)
+
+Definition all_disjoint pl :=
+  forall p k1 k2 pol1 pol2,
+    nth_error pl k1 = Some pol1 -> nth_error pl k2 = Some pol2 ->
+    in_poly p pol1 = true -> in_poly p pol2 = true -> k1 = k2.
+
+Lemma all_disjoint_nil :
+  all_disjoint nil.
+Proof.
+  intros p [|k1] [|k2] ? ? ? ? ? ?; simpl in *; congruence.
+Qed.
+
+Lemma all_disjoint_cons :
+  forall pol pl, all_disjoint pl -> (forall p pol1, In pol1 pl -> in_poly p pol = true -> in_poly p pol1 = true -> False) -> all_disjoint (pol :: pl).
+Proof.
+  intros pol pl Hdisj H p k1 k2 pol1 pol2 Hk1 Hk2 Hpol1 Hpol2.
+  destruct k1 as [|k1]; destruct k2 as [|k2]; [auto| | |erewrite (Hdisj p k1 k2); eauto]; simpl in *; exfalso;
+    [apply nth_error_In in Hk2|apply nth_error_In in Hk1]; eapply (H p); try congruence; eauto.
+Qed.
+
+Lemma all_disjoint_cons_rev :
+  forall pol pl, all_disjoint (pol :: pl) -> all_disjoint pl /\ (forall p pol1, In pol1 pl -> in_poly p pol = true -> in_poly p pol1 = true -> False).
+Proof.
+  intros pol pl Hdisj.
+  split.
+  - intros p k1 k2 ? ? ? ? ? ?. assert (S k1 = S k2) by (eapply (Hdisj p (S k1) (S k2)); eauto). congruence.
+  - intros p pol1 Hin H1 H2.
+    apply In_nth_error in Hin. destruct Hin as [k Hk].
+    specialize (Hdisj p 0%nat (S k) pol pol1).
+    enough (0%nat = S k) by congruence.
+    apply Hdisj; auto.
+Qed.
+
+Lemma all_disjoint_app :
+  forall pl1 pl2, all_disjoint pl1 -> all_disjoint pl2 -> (forall p pol1 pol2, In pol1 pl1 -> In pol2 pl2 -> in_poly p pol1 = true -> in_poly p pol2 = true -> False) ->
+             all_disjoint (pl1 ++ pl2).
+Proof.
+  induction pl1.
+  - intros; simpl; auto.
+  - intros pl2 H1 H2 H. simpl.
+    apply all_disjoint_cons_rev in H1. simpl in H.
+    apply all_disjoint_cons; [apply IHpl1; try tauto|].
+    + intros; eapply H; eauto.
+    + intros p pol1 Hin. rewrite in_app_iff in Hin; destruct Hin; [|eapply H; eauto].
+      destruct H1 as [_ H1]; eapply H1; eauto.
+Qed.
+
+Lemma all_disjoint_flatten :
+  forall pll, (forall l1, In l1 pll -> all_disjoint l1) ->
+         (forall p k1 k2 l1 l2 pol1 pol2, nth_error pll k1 = Some l1 -> nth_error pll k2 = Some l2 -> In pol1 l1 -> In pol2 l2 ->
+                                     in_poly p pol1 = true -> in_poly p pol2 = true -> k1 = k2) -> all_disjoint (flatten pll).
+Proof.
+  induction pll.
+  - intros; apply all_disjoint_nil.
+  - intros Hdisj Hdisj2. simpl.
+    apply all_disjoint_app; [apply Hdisj; simpl; auto|apply IHpll|].
+    + intros; apply Hdisj; simpl; auto.
+    + intros p k1 k2 ? ? ? ? ? ? ? ? ? ?. enough (S k1 = S k2) by congruence. eapply Hdisj2; simpl in *; eauto.
+    + intros p pol1 pol2 Ha Hfl Hin1 Hin2.
+      rewrite flatten_In in Hfl. destruct Hfl as [u [Hinu Huin]].
+      apply In_nth_error in Huin. destruct Huin as [k Hk].
+      enough (0%nat = S k) by congruence. eapply Hdisj2; simpl in *; eauto.
+Qed.
+
+Lemma all_disjoint_map_filter :
+  forall (A : Type) (f : A -> polyhedron) (P : A -> bool) (l : list A), all_disjoint (map f l) -> all_disjoint (map f (filter P l)).
+Proof.
+  intros A f P. induction l.
+  - intros H; simpl in *; auto.
+  - intros H; simpl in *.
+    apply all_disjoint_cons_rev in H. destruct H as [H1 H2].
+    destruct (P a).
+    + simpl. apply all_disjoint_cons; [auto|].
+      intros p pol1 H3 H4 H5; eapply H2; eauto.
+      rewrite in_map_iff; rewrite in_map_iff in H3. destruct H3 as [x H3]; exists x; rewrite filter_In in H3; tauto.
+    + auto.
+Qed.
