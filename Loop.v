@@ -2,11 +2,13 @@ Require Import ZArith.
 Require Import List.
 Require Import Bool.
 Require Import Psatz.
-Open Scope Z_scope.
-Open Scope list_scope.
 
 Require Import Instr.
 Require Import Misc.
+Require Import Semantics.
+
+Open Scope Z_scope.
+Open Scope list_scope.
 
 (** * The semantics of the Loop language *)
 
@@ -276,14 +278,6 @@ Qed.
 
 Definition make_let value inner :=
   Loop value (Sum value (Constant 1)) inner.
-
-Lemma Zrange_single :
-  forall x, Zrange x (x + 1) = (x :: nil).
-Proof.
-  intros x. unfold Zrange.
-  replace (x + 1 - x) with 1 by lia. simpl.
-  f_equal. lia.
-Qed.
 
 Lemma make_let_correct :
   forall value inner env mem1 mem2,

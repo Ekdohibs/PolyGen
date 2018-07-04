@@ -174,3 +174,6 @@ Module VplCanonizerZ.
   Qed.
 
 End VplCanonizerZ.
+
+Module Canon := VplCanonizer.
+Module CanonZ := VplCanonizerZ.

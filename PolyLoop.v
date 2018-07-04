@@ -4,8 +4,8 @@ Require Import Bool.
 Require Import Psatz.
 
 Require Import Linalg.
-Require Import Loop. (* for iter_semantics *)
 Require Import Misc.
+Require Import Semantics.
 Require Import Instr.
 
 Open Scope Z_scope.

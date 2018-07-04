@@ -6,6 +6,7 @@ Require Import List.
 Require Import String.
 Require Import Linalg.
 Require Import ZArith.
+Require Import TopoSort.
 
 Open Scope Z_scope.
 Import ListNotations.

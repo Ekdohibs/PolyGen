@@ -2,14 +2,16 @@ Require Import ZArith.
 Require Import List.
 Require Import Bool.
 Require Import Psatz.
-Require Import Setoid.
+Require Import Setoid Morphisms.
+
+Require Import Misc.
+Require Import Linalg.
+Require Import Semantics.
+Require Import Instr.
+
 Open Scope Z_scope.
 Open Scope list_scope.
 
-Require Import Linalg.
-Require Import Instr.
-Require Import Misc.
-Require Import Setoid Morphisms.
 
 (** * The semantics of polyhedral programs with schedules *)
 
@@ -34,11 +36,7 @@ Proof.
   reflexivity.
 Qed.
 
-(* Definition wf_scan (to_scan : nat -> vector -> bool) := Proper (eq ==> veq ==> eq) to_scan.
-Transparent wf_scan.
-Hint Unfold wf_scan. *)
 Notation "'wf_scan'" := (Proper (eq ==> veq ==> eq)) (only parsing).
-(* forall n p q, is_eq p q = true -> to_scan n p = to_scan n q. *)
 
 Inductive poly_semantics : (nat -> list Z -> bool) -> Poly_Program -> mem -> mem -> Prop :=
 | PolyDone : forall to_scan prog mem, (forall n p, to_scan n p = false) -> poly_semantics to_scan prog mem mem
@@ -65,8 +63,6 @@ Lemma scanned_wf_compat :
   forall to_scan n p, wf_scan to_scan -> wf_scan (scanned to_scan n p).
 Proof.
   intros to_scan n p Hwf. apply scanned_proper; [exact Hwf | reflexivity | reflexivity].
-(*  intros to_scan n p Hwf m q r Heq.
-  autounfold. rewrite (Hwf m q r); auto. f_equal; f_equal; f_equal. apply is_eq_is_eq_right; auto. *)
 Qed.
 
 Theorem poly_semantics_concat :
@@ -480,36 +476,3 @@ Proof.
     rewrite resize_app in He by congruence. symmetry. exact He.
   - intros n p Hout. unfold env_scan. rewrite Hout. auto.
 Qed.
-
-(** * Sequence concatenation is correct as well *)
-(*
-Theorem poly_lex_env_concat_seq :
-  forall env dim lb ub prog mem1 mem2,
-    iter_semantics (fun x => env_poly_lex_semantics dim (rev (x :: env)) prog) lb ub mem1 mem2 ->
-    (forall x n p, env_scan prog (rev (x :: env)) dim n p = true -> lb <= x < ub) ->
-    (forall x, wf_scan (to_scans x)) ->
-    (forall x1 x2 n p, to_scans x1 n p = true -> to_scans x2 n p = true -> x1 = x2) ->
-    (forall x1 n1 p1 x2 n2 p2, lex_compare p2 p1 = Lt -> to_scans x1 n1 p1 = true -> to_scans x2 n2 p2 = true -> x2 <= x1) ->
-    poly_lex_semantics (fun n p => existsb (fun x => to_scans x n p) (Zrange lb ub)) prog mem1 mem2.
-Proof.
-  intros to_scans lb ub prog mem1 mem2 Hsem.
-  induction Hsem as [lb ub mem Hempty|lb ub mem1 mem2 mem3 Hcontinue Hsem1 Hsem2 IH].
-  - intros Hwf Hscans Hcmp.
-    rewrite Zrange_empty by lia. simpl.
-    apply PolyLexDone; auto.
-  - intros Hwf Hscans Hcmp.
-    eapply poly_lex_semantics_extensionality.
-    + eapply poly_lex_concat; [exact Hsem1| | | |apply IH; auto].
-      * apply Hwf.
-      * intros n p. simpl.
-        destruct (to_scans lb n p) eqn:Hscanl; [|auto]. right.
-        apply not_true_is_false; rewrite existsb_exists; intros [x [Hin Hscanx]].
-        rewrite Zrange_in in Hin. specialize (Hscans lb x n p Hscanl Hscanx). lia.
-      * intros n1 p1 n2 p2 H.
-        destruct (to_scans lb n1 p1) eqn:Hscanl; [|auto]. right.
-        apply not_true_is_false; rewrite existsb_exists; intros [x [Hin Hscanx]].
-        rewrite Zrange_in in Hin. specialize (Hcmp lb n1 p1 x n2 p2 H Hscanl Hscanx). lia.
-    + intros n p. simpl. rewrite Zrange_begin with (lb := lb) by lia.
-      simpl. reflexivity.
-Qed.
-*)

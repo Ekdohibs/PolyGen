@@ -539,6 +539,14 @@ Proof.
   destruct (ub - lb); simpl; lia.
 Qed.
 
+Lemma Zrange_single :
+  forall x, Zrange x (x + 1) = (x :: nil).
+Proof.
+  intros x. unfold Zrange.
+  replace (x + 1 - x) with 1 by lia. simpl.
+  f_equal. lia.
+Qed.
+
 (** * Results on integer division *)
 
 Lemma div_lt_iff :
