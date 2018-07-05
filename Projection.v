@@ -703,3 +703,7 @@ Module PolyProjectImpl (Import Imp: FullImpureMonad) (Canon : PolyCanonizer Imp)
   Qed.
 
 End PolyProjectImpl.
+
+Require Import ImpureAlarmConfig.
+Module Proj := FourierMotzkinProject CoreAlarmed.
+Module Export PPI := PolyProjectImpl CoreAlarmed Canon Proj.

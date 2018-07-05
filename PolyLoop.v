@@ -8,6 +8,10 @@ Require Import Misc.
 Require Import Semantics.
 Require Import Instr.
 
+Require Import PolyTest.
+Require Import PolyOperations.
+Require Import ImpureAlarmConfig.
+
 Open Scope Z_scope.
 
 Notation affine_expr := (positive * (list Z * Z))%type.
@@ -79,4 +83,19 @@ Lemma PLSeq_inv_sem :
 Proof.
   intros env p st mem1 mem3 H.
   inversion_clear H. exists mem2; auto.
+Qed.
+
+Fixpoint make_seq l :=
+  match l with
+  | nil => PSkip
+  | x :: l => PSeq x (make_seq l)
+  end.
+
+Lemma make_seq_semantics :
+  forall l env mem1 mem2, poly_loop_semantics (make_seq l) env mem1 mem2 <->
+                     iter_semantics (fun s => poly_loop_semantics s env) l mem1 mem2.
+Proof.
+  induction l.
+  - intros; split; intros H; inversion_clear H; constructor.
+  - intros; split; simpl; intros H; inversion_clear H; econstructor; eauto; rewrite IHl in *; eauto.
 Qed.
