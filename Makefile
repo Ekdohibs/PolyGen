@@ -27,7 +27,7 @@ documentation: $(FILES)
 
 .depend: $(FILES)
 	@echo "Analyzing Coq dependencies"
-	@$(COQDEP) $^ > .depend
+	@$(COQDEP) $^ > .depend || { rm -f .depend; exit 2; }
 
 all: proof documentation
 
