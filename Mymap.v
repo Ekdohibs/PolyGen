@@ -1,4 +1,17 @@
-(** * This entire file is due to a bug in Coq: see https://github.com/coq/coq/issues/7875
+(* *****************************************************************)
+(*                                                                 *)
+(*               Verified polyhedral AST generation                *)
+(*                                                                 *)
+(*                 Nathanaël Courant, Inria Paris                  *)
+(*                                                                 *)
+(*  Copyright Inria. All rights reserved. This file is distributed *)
+(*  under the terms of the GNU Lesser General Public License as    *)
+(*  published by the Free Software Foundation, either version 2.1  *)
+(*  of the License, or (at your option) any later version.         *)
+(*                                                                 *)
+(* *****************************************************************)
+
+(** This entire file is due to a bug in Coq: see https://github.com/coq/coq/issues/7875
     Once this bug is fixed, this file will no longer be relevant. *)
 
 Require Import List.

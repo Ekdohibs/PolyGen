@@ -44,10 +44,6 @@ $(MENHIR_GENERATED_DUMMY): %.dummy: %.mly
 	@echo "MENHIR $<"
 	@$(MENHIR) $< > $@
 
-#$(MENHIR_GENERATED_ML): %.ml: %.mly
-#	@echo "MENHIR $<"
-#	@$(MENHIR) $< > $@
-
 $(OCAMLLEX_GENERATED_ML): %.ml: %.mll
 	@echo "OCAMLLEX $<"
 	@$(OCAMLLEX) $< -o $@
