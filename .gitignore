@@ -12,3 +12,4 @@ ocaml/.depend
 *.cma
 *.cmxa
 *.o
+ocaml/test

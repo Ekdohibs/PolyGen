@@ -25,6 +25,10 @@ GENERATED=$(MENHIR_GENERATED_ML) $(MENHIR_GENERATED_MLI) $(OCAMLLEX_GENERATED_ML
 
 MODORDER=ocaml str.cma ../tools/modorder.ml .depend
 
+clean:
+	rm -f $(GENERATED)
+	for d in $(DIRS); do rm -f $$d/*.cm[iotx] $$d/*cmti $$d/*.o $$d/*.annot; done
+
 ifeq ($(wildcard .depend),.depend)
 
 OBJS:=$(shell $(MODORDER) ./test_extract.cmx)
@@ -60,10 +64,6 @@ $(OCAMLLEX_GENERATED_ML): %.ml: %.mll
 %.cmx: %.ml
 	@echo "OCAMLOPT $<"
 	@$(OCAMLOPT) -c -annot $<
-
-clean:
-	rm -f $(GENERATED)
-	for d in $(DIRS); do rm -f $$d/*.cm[iotx] $$d/*cmti $$d/*.o; done
 
 .depend: $(GENERATED)
 	@echo "Analyzing OCaml dependencies"

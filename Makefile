@@ -15,9 +15,6 @@ Extraction.vo: $(FILES:.v=.vo) Extraction.v
 	mkdir -p extraction
 	$(COQC) Extraction.v
 	rm extraction/ImpureConfig.mli
-#	rm extraction/*.mli
-#	tools/fix_extract.sh extraction/PedraQBackend.ml
-#	cp extraction/PedraQBackend.ml.1 extraction/PedraQBackend.ml
 
 %.vo: %.v
 	@rm -f doc/$(*F).glob
@@ -38,10 +35,17 @@ extract: Extraction.vo
 
 vplsetup:
 	cp -f VPL/ocaml/src/Wrapper_no_glpk.ml VPL/ocaml/src/Wrapper.ml
+	$(MAKE) -C VPL/coq
 
 ocaml: extract
 	rm -f ocaml/.depend
 	$(MAKE) -C ocaml .depend
 	$(MAKE) -C ocaml
+
+clean:
+	$(MAKE) -C ocaml clean
+	$(MAKE) -C VPL/coq clean
+	rm -f VPL/ocaml/src/Wrapper.ml
+	rm -rf *.vo doc/*.glob *.aux doc/html/*.html *.cache extraction
 
 -include .depend
