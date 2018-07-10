@@ -74,3 +74,22 @@ Proof.
     + erewrite <- (ctx_simplify_correct _ _ _ Hnpol); auto.
       rewrite resize_poly_in; [|rewrite rev_length]; auto.
 Qed.
+
+Fixpoint polyloop_find_loopseq stmt :=
+  match stmt with
+  | PSkip => Some nil
+  | PSeq (PLoop pol st) stmt => match polyloop_find_loopseq stmt with None => None | Some l => Some ((pol, st) :: l) end
+  | _ => None
+  end.
+
+Lemma polyloop_find_loopseq_eq :
+  forall stmt res, polyloop_find_loopseq stmt = Some res ->
+              stmt = make_seq (map (fun z => PLoop (fst z) (snd z)) res).
+Proof.
+  induction stmt; intros res Hres; simpl in *; try congruence.
+  - assert (H : res = nil) by congruence; rewrite H. reflexivity.
+  - destruct stmt1; try congruence.
+    destruct (polyloop_find_loopseq stmt2) as [l|] eqn:Heq; [|congruence].
+    injection Hres as Hres. rewrite <- Hres; simpl.
+    f_equal. apply IHstmt2; reflexivity.
+Qed.
