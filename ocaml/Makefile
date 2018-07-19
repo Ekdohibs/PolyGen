@@ -25,6 +25,8 @@ GENERATED=$(MENHIR_GENERATED_ML) $(MENHIR_GENERATED_MLI) $(OCAMLLEX_GENERATED_ML
 
 MODORDER=ocaml str.cma ../tools/modorder.ml .depend
 
+all: test
+
 clean:
 	rm -f $(GENERATED)
 	for d in $(DIRS); do rm -f $$d/*.cm[iotx] $$d/*cmti $$d/*.o $$d/*.annot; done
