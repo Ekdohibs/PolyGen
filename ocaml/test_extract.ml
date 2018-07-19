@@ -134,7 +134,7 @@ let process_pi (((env_size, scan_dimensions), name), pi) =
     Format.printf "Generated code:@.%a@.@." (print_loop env_size "") gen
   else
     Format.printf "Generation failed.@.@.";
-  let (gen, ok) = CodeGen.complete_generate_many scand totald [pi_lex] in
+  let (gen, ok) = CodeGen.complete_generate_lex_many scand totald [pi_lex] in
   if ok then
     Format.printf "Generated code (many polys):@.%a@.@." (print_loop env_size "") gen
   else

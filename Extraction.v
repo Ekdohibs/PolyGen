@@ -185,4 +185,4 @@ Extraction Inline CoreAlarmed.Base.pure CoreAlarmed.Base.imp.
 
 Cd "extraction".
 
-Separate Extraction ZArith_dec complete_generate complete_generate_many test_many pi_elim_schedule test_pis Ring_polynom_AddOnQ CstrLCF ProgVar LinTerm(* test_pi_lex test_pi_generate *).
+Separate Extraction ZArith_dec complete_generate complete_generate_lex_many complete_generate_many test_many pi_elim_schedule test_pis Ring_polynom_AddOnQ CstrLCF ProgVar LinTerm(* test_pi_lex test_pi_generate *).

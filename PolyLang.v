@@ -314,6 +314,63 @@ Proof.
   intros. apply make_sched_poly_correct_aux with (q := nil); auto; lia.
 Qed.
 
+Theorem make_null_poly_nrl :
+  forall n d, (poly_nrl (make_null_poly d n) <= d + n)%nat.
+Proof.
+  induction n.
+  - intros; unfold poly_nrl; simpl; lia.
+  - intros d. simpl. unfold poly_nrl; simpl.
+    rewrite !Nat.max_lub_iff.
+    split; [|split; [|specialize (IHn (S d)); unfold poly_nrl in *; lia]];
+      rewrite <- nrlength_def, resize_app_le, repeat_length by (rewrite repeat_length; lia);
+      replace (d + S n - d)%nat with (S n) by lia; simpl;
+        f_equiv; f_equiv; rewrite resize_eq; simpl; (reflexivity || lia).
+Qed.
+
+Theorem make_sched_poly_nrl_aux :
+  forall l i d es, (length l + i <= d)%nat -> (poly_nrl (make_sched_poly d i es l) <= d + (Nat.max es (poly_nrl l)))%nat.
+Proof.
+  induction l.
+  - simpl; intros i d es H.
+    generalize (make_null_poly_nrl (d - i)%nat (i + es)%nat). lia.
+  - intros i d es H; simpl in *. destruct a as [a c]. unfold poly_nrl in *; simpl in *.
+    rewrite !Nat.max_lub_iff. split; [|split; [|rewrite IHl; lia]].
+    all: rewrite nrlength_app; transitivity (es + (i + S ((d - i - 1) + (nrlength a - es))))%nat; [|lia].
+    all: rewrite ?mult_vector_length, resize_length; apply Nat.add_le_mono_l.
+    all: rewrite nrlength_app, repeat_length; apply Nat.add_le_mono_l.
+    all: rewrite nrlength_cons; apply -> Nat.succ_le_mono.
+    all: rewrite nrlength_app, repeat_length; apply Nat.add_le_mono_l.
+    all: rewrite ?nrlength_mult, nrlength_skipn; lia.
+Qed.
+
+Theorem make_sched_poly_nrl :
+  forall l d es, (length l <= d)%nat -> (poly_nrl (make_sched_poly d 0%nat es l) <= d + (Nat.max es (poly_nrl l)))%nat.
+Proof.
+  intros; apply make_sched_poly_nrl_aux; lia.
+Qed.
+
+Lemma insert_zeros_nrl :
+  forall d es v, (nrlength (insert_zeros d es v) <= d + nrlength v)%nat.
+Proof.
+  induction es.
+  - intros v; unfold insert_zeros; simpl. rewrite nrlength_app, repeat_length; lia.
+  - intros [|x v]; unfold insert_zeros in *; simpl.
+    + case_if eq H; reflect; [lia|].
+      exfalso; apply H. apply nrlength_null_zero.
+      unfold is_null. rewrite !forallb_app; reflect.
+      split; [apply resize_nil_null|]. split; [apply repeat_zero_is_null|auto].
+    + case_if eq H1; reflect; [lia|].
+      case_if eq H2; reflect.
+      * destruct H2 as [-> H2]; apply nrlength_zero_null in H2. destruct H1 as [H1 | H1]; [lia|].
+        exfalso; apply H1. apply nrlength_null_zero.
+        rewrite resize_null_repeat by auto.
+        unfold is_null; rewrite !forallb_app; reflect.
+        split; [apply repeat_zero_is_null|]. split; [apply repeat_zero_is_null|].
+        apply nrlength_zero_null; apply nrlength_null_zero in H2.
+        rewrite nrlength_skipn; lia.
+      * specialize (IHes v). lia.
+Qed.
+
 Definition pi_elim_schedule (d : nat) (env_size : nat) (pi : Polyhedral_Instruction) :=
   {|
     pi_instr := pi.(pi_instr) ;
@@ -322,6 +379,21 @@ Definition pi_elim_schedule (d : nat) (env_size : nat) (pi : Polyhedral_Instruct
     pi_poly := make_sched_poly d 0%nat env_size pi.(pi_schedule) ++
                map (insert_zeros_constraint d env_size) pi.(pi_poly) ;
   |}.
+
+Lemma pi_elim_schedule_nrl :
+  forall d es pi,
+    (length pi.(pi_schedule) <= d)%nat ->
+    (poly_nrl (pi_elim_schedule d es pi).(pi_poly) <= d + (Nat.max es (Nat.max (poly_nrl pi.(pi_poly)) (poly_nrl pi.(pi_schedule)))))%nat.
+Proof.
+  intros d es pi H. simpl.
+  rewrite poly_nrl_app. rewrite Nat.max_lub_iff; split.
+  - rewrite make_sched_poly_nrl; lia.
+  - unfold poly_nrl, insert_zeros_constraint in *. rewrite map_map. apply list_le_max; intros u Hu.
+    rewrite in_map_iff in Hu. destruct Hu as [c [Hu Hc]]; simpl in *.
+    transitivity (d + nrlength (fst c))%nat;
+      [|apply Nat.add_le_mono_l; rewrite !Nat.max_le_iff; right; left; apply list_max_ge; rewrite in_map_iff; exists c; auto].
+    rewrite <- Hu; apply insert_zeros_nrl.
+Qed.
 
 Definition elim_schedule (d : nat) (env_size : nat) (p : Poly_Program) := map (pi_elim_schedule d env_size) p.
 

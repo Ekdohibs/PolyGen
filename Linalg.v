@@ -1308,6 +1308,29 @@ Proof.
     rewrite eq_iff_eq_true; reflect; nia.
 Qed.
 
+Lemma nrlength_skipn :
+  forall n p, nrlength (skipn n p) = (nrlength p - n)%nat.
+Proof.
+  induction n.
+  - intros; simpl; lia.
+  - intros [|x p]; simpl; [reflexivity|]. rewrite IHn.
+    case_if eq H; reflect; lia.
+Qed.
+
+Lemma nrlength_cons :
+  forall x p, (nrlength (x :: p) <= S (nrlength p))%nat.
+Proof.
+  intros; simpl. case_if; lia.
+Qed.
+
+Lemma nrlength_app :
+  forall p q, (nrlength (p ++ q) <= length p + nrlength q)%nat.
+Proof.
+  induction p.
+  - intros; simpl; auto.
+  - intros; simpl; specialize (IHp q). case_if; lia.
+Qed.
+
 (** * Size at which a polyhedron can be truncated without change *)
 
 Definition poly_nrl (pol : polyhedron) := list_max (map (fun c => nrlength (fst c)) pol).
@@ -1338,6 +1361,13 @@ Proof.
     rewrite <- Hlen, <- nrlength_def. symmetry; auto.
   - intros H c Hin. symmetry; rewrite nrlength_def. apply H.
     rewrite in_map_iff; exists c; auto.
+Qed.
+
+Lemma poly_nrl_app :
+  forall p q, poly_nrl (p ++ q) = Nat.max (poly_nrl p) (poly_nrl q).
+Proof.
+  intros p q. unfold poly_nrl.
+  rewrite map_app, list_max_app. reflexivity.
 Qed.
 
 (** * Whether a variable is absent in a given polyhedron *)

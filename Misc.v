@@ -640,6 +640,12 @@ Proof.
   - intros x H; simpl in *; destruct H as [H | H]; [|specialize (IHl x H)]; lia.
 Qed.
 
+Lemma list_max_app :
+  forall p q, list_max (p ++ q) = Nat.max (list_max p) (list_max q).
+Proof.
+  induction p; intros; simpl in *; [reflexivity|rewrite IHp]; lia.
+Qed.
+
 (** * Extra results on [gcd] on [positive] *)
 
 Definition flip_ggcd (gg : positive * (positive * positive)) := (fst gg, (snd (snd gg), fst (snd gg))).
