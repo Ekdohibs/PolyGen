@@ -8,7 +8,7 @@ We recommend to use either OPAM (the OCaml package manager) or Nix (a Linux pack
 
 ## With OPAM 
 
-Create a new opam switch: `opam switch create polygen 4.06.1+flambda`.
+Create a new OPAM switch: `opam switch create polygen 4.06.1+flambda`.
 Install GMP, Debian/Ubuntu package libgmp-dev
 Install GLPK, Debian/Ubuntu package libglpk-dev
 Install [eigen](http://eigen.tuxfamily.org/), Debian/Ubuntu package libeigen3-dev.
@@ -21,6 +21,10 @@ One way to install `nix` is:
 ```bash
 curl https://nixos.org/nix/install | sh
 ```
+
+Note that, if you use OPAM, the OPAM init scripts can add your current version of ocaml to your `$PATH`. In that case, it is advised to use
+`nix-shell --pure`, which will run a shell where all dependencies have been downloaded and installed, but no other programs will be available,
+avoiding the conflicts with a preexisting OPAM installation.
 
 # Compiling
 
