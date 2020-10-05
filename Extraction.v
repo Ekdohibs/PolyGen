@@ -152,6 +152,12 @@ Definition test_pi_4 := {|
    pi_transformation := [c] ;
 |}.
 
+Definition test_pi_5 := {|
+   pi_instr := make_instr 0%nat ;
+   pi_poly := {{ $0 <= b <= a }} ;
+   pi_schedule := [2 * b] ;
+   pi_transformation := [b] ;
+|}.
 
 Open Scope string_scope.
 
@@ -159,7 +165,8 @@ Definition test_pis := [
   (2%nat, 2%nat, "Swap Loop", test_pi_1) ;
   (1%nat, 3%nat, "Linear 3-2-1", test_pi_2) ;
   (1%nat, 2%nat, "Tiling-1", test_pi_3) ;
-  (1%nat, 2%nat, "Tiling-2", test_pi_4)
+  (1%nat, 2%nat, "Tiling-2", test_pi_4) ;
+  (1%nat, 1%nat, "Modulo", test_pi_5)
 ].
 
 Definition test_many := [{|

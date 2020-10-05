@@ -7,7 +7,7 @@ COQC="$(COQBIN)coqc" -q $(COQINCLUDES) $(COQCOPTS)
 COQ2HTML=coq2html
 COQDEP="$(COQBIN)coqdep" $(COQINCLUDES)
 
-FILES=Linalg.v Loop.v PolyLang.v CodeGen.v Instr.v Misc.v VplInterface.v Result.v PolyLoop.v ImpureAlarmConfig.v Canonizer.v Projection.v Heuristics.v TopoSort.v Semantics.v LoopGen.v Mymap.v ImpureOperations.v ASTGen.v PolyTest.v PolyOperations.v
+FILES=Linalg.v Loop.v PolyLang.v CodeGen.v Instr.v Misc.v VplInterface.v Result.v PolyLoop.v PolyLoopSimpl.v ImpureAlarmConfig.v Canonizer.v Projection.v Heuristics.v TopoSort.v Semantics.v LoopGen.v Mymap.v ImpureOperations.v ASTGen.v PolyTest.v PolyOperations.v
 
 proof: $(FILES:.v=.vo)
 
