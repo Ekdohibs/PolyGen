@@ -13,3 +13,4 @@ ocaml/.depend
 *.cmxa
 *.o
 ocaml/test
+doc/html/

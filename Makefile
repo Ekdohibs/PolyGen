@@ -23,6 +23,7 @@ Extraction.vo: $(FILES:.v=.vo) Extraction.v
 
 documentation: $(FILES) proof
 	@echo "Generating documentation"
+	@mkdir -p doc/html/
 	@$(COQ2HTML) -d doc/html/ $(FILES:%.v=doc/%.glob) $(FILES)
 
 .depend: $(FILES)
@@ -46,6 +47,6 @@ clean:
 	$(MAKE) -C ocaml clean
 	$(MAKE) -C VPL/coq clean
 	rm -f VPL/ocaml/src/Wrapper.ml
-	rm -rf *.vo doc/*.glob *.aux doc/html/*.html *.cache extraction
+	rm -rf *.vo doc/*.glob .*.aux doc/html/*.html *.cache extraction
 
 -include .depend
