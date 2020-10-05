@@ -44,3 +44,5 @@ There are four steps for compiling the code:
 The executable running the code generator on different tests will be in `ocaml/test`.  Just run `./ocaml/test`, the results will be displayed on standard output.
 
 Alternatively, if using `nix`, you can just type `nix build`, and the executable will be available in `result/bin/test`.
+
+You can build the documentation with `make documentation`, and it will be available in doc/index.html, or result/doc/index.html if you used `nix build`.

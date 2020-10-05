@@ -21,9 +21,9 @@ Extraction.vo: $(FILES:.v=.vo) Extraction.v
 	@echo "COQC $*.v"
 	@$(COQC) -dump-glob doc/$(*F).glob $*.v
 
-documentation: $(FILES)
+documentation: $(FILES) proof
 	@echo "Generating documentation"
-	@$(COQ2HTML) -d doc/html/ $(FILES:%.v=doc/%.glob) $^
+	@$(COQ2HTML) -d doc/html/ $(FILES:%.v=doc/%.glob) $(FILES)
 
 .depend: $(FILES)
 	@echo "Analyzing Coq dependencies"

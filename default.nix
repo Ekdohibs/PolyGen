@@ -13,18 +13,23 @@ stdenv.mkDerivation rec {
     menhir
     zarith
     glpk
-  ]) ++ [ coq_8_7 ];
+  ]) ++ [ coq_8_7 coq2html ];
   buildPhase = ''
     make vplsetup
     make
     make extract
     make ocaml
+    make documentation
   '';
   checkPhase = ''
     ocaml/test
   '';
   installPhase = ''
     mkdir -p "$out/bin"
+    mkdir -p "$out/doc"
     cp ocaml/test "$out/bin/test"
+    cp doc/index.html "$out/doc/index.html"
+    cp -r doc/html "$out/doc/html"
   '';
+  forceShare = [ "man" "info" ]; # Do not move doc/ to share/doc/
 }
