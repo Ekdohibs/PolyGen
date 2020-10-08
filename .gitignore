@@ -14,3 +14,9 @@ ocaml/.depend
 *.o
 ocaml/test
 doc/html/
+VPL/ocaml/src/lin/poly/PolyLexer.ml
+VPL/ocaml/src/lin/poly/PolyParser.ml
+VPL/ocaml/src/lin/poly/PolyParser.mli
+VPL/ocaml/src/plp/PLPLexer.ml
+VPL/ocaml/src/plp/PLPParser.ml
+VPL/ocaml/src/plp/PLPParser.mli
